@@ -1,0 +1,289 @@
+[
+  {
+    "id": "H1781289292731896",
+    "timestamp": "2026-06-12T18:34:52.731Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781289292730890",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "创建班次 SH1781289292730890"
+  },
+  {
+    "id": "H1781289454730594",
+    "timestamp": "2026-06-12T18:37:34.730Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781289292730890",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781289655867496",
+    "timestamp": "2026-06-12T18:40:55.867Z",
+    "action": "CREATE_EXCEPTION",
+    "shiftId": "SH1781289292730890",
+    "exceptionId": "EX1781289655867791",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "登记异常：现金差额  金额 -50"
+  },
+  {
+    "id": "H1781290292769296",
+    "timestamp": "2026-06-12T18:51:32.769Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781289292730890",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "接班人确认交接完成"
+  },
+  {
+    "id": "H1781290362770779",
+    "timestamp": "2026-06-12T18:52:42.770Z",
+    "action": "SUBMIT_REVIEW",
+    "shiftId": "SH1781289292730890",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "提交店长复核"
+  },
+  {
+    "id": "H1781290736570261",
+    "timestamp": "2026-06-12T18:58:56.570Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781290736569267",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "创建班次 SH1781290736569267"
+  },
+  {
+    "id": "H1781290736577267",
+    "timestamp": "2026-06-12T18:58:56.577Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781290736569267",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781290736587581",
+    "timestamp": "2026-06-12T18:58:56.587Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781290736569267",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "接班人确认交接完成"
+  },
+  {
+    "id": "H1781290736591553",
+    "timestamp": "2026-06-12T18:58:56.591Z",
+    "action": "CREATE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX1781290736591725",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "登记异常：现金差额  金额 50"
+  },
+  {
+    "id": "H1781290736596708",
+    "timestamp": "2026-06-12T18:58:56.596Z",
+    "action": "CREATE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX178129073659554",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "登记异常：库存短缺 Coca Cola 金额 3"
+  },
+  {
+    "id": "H1781290736600595",
+    "timestamp": "2026-06-12T18:58:56.600Z",
+    "action": "SUBMIT_REVIEW",
+    "shiftId": "SH1781290736569267",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "提交店长复核"
+  },
+  {
+    "id": "H1781290736608284",
+    "timestamp": "2026-06-12T18:58:56.608Z",
+    "action": "HANDLE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX1781290736591725",
+    "userId": "U001",
+    "userName": "张店长",
+    "detail": "处理异常：Will deduct from next shift"
+  },
+  {
+    "id": "H1781290736611626",
+    "timestamp": "2026-06-12T18:58:56.611Z",
+    "action": "HANDLE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX178129073659554",
+    "userId": "U001",
+    "userName": "张店长",
+    "detail": "处理异常：Inventory adjusted"
+  },
+  {
+    "id": "H1781290736615815",
+    "timestamp": "2026-06-12T18:58:56.615Z",
+    "action": "CLOSE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX1781290736591725",
+    "userId": "U001",
+    "userName": "张店长",
+    "detail": "关闭异常：Accepted, deducted from salary"
+  },
+  {
+    "id": "H1781290736618596",
+    "timestamp": "2026-06-12T18:58:56.618Z",
+    "action": "CLOSE_EXCEPTION",
+    "shiftId": "SH1781290736569267",
+    "exceptionId": "EX178129073659554",
+    "userId": "U001",
+    "userName": "张店长",
+    "detail": "关闭异常：Inventory write-off approved"
+  },
+  {
+    "id": "H1781290736622355",
+    "timestamp": "2026-06-12T18:58:56.622Z",
+    "action": "CLOSE_SHIFT",
+    "shiftId": "SH1781290736569267",
+    "userId": "U001",
+    "userName": "张店长",
+    "detail": "店长关闭班次，复核意见：All good, shift approved"
+  },
+  {
+    "id": "H1781290736724999",
+    "timestamp": "2026-06-12T18:58:56.724Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781290736723152",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "创建班次 SH1781290736723152"
+  },
+  {
+    "id": "H1781290736730741",
+    "timestamp": "2026-06-12T18:58:56.730Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781290736723152",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781290736735557",
+    "timestamp": "2026-06-12T18:58:56.735Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781290736723152",
+    "userId": "U005",
+    "userName": "孙晚班",
+    "detail": "接班人确认交接完成"
+  },
+  {
+    "id": "H1781290736756697",
+    "timestamp": "2026-06-12T18:58:56.756Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781290736755465",
+    "userId": "U005",
+    "userName": "孙晚班",
+    "detail": "创建班次 SH1781290736755465"
+  },
+  {
+    "id": "H1781290736760596",
+    "timestamp": "2026-06-12T18:58:56.760Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781290736755465",
+    "userId": "U005",
+    "userName": "孙晚班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781290736766468",
+    "timestamp": "2026-06-12T18:58:56.766Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781290736755465",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "接班人确认交接完成"
+  },
+  {
+    "id": "H1781290736770921",
+    "timestamp": "2026-06-12T18:58:56.770Z",
+    "action": "CREATE_EXCEPTION",
+    "shiftId": "SH1781290736755465",
+    "exceptionId": "EX1781290736769646",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "登记异常：现金差额  金额 100"
+  },
+  {
+    "id": "H1781290736773309",
+    "timestamp": "2026-06-12T18:58:56.773Z",
+    "action": "SUBMIT_REVIEW",
+    "shiftId": "SH1781290736755465",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "提交店长复核"
+  },
+  {
+    "id": "H1781290756598291",
+    "timestamp": "2026-06-12T18:59:16.598Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781290756597104",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "创建班次 SH1781290756597104"
+  },
+  {
+    "id": "H1781290756612225",
+    "timestamp": "2026-06-12T18:59:16.612Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781290756597104",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781290756618262",
+    "timestamp": "2026-06-12T18:59:16.618Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781290756597104",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "接班人确认交接完成"
+  },
+  {
+    "id": "H1781290756622469",
+    "timestamp": "2026-06-12T18:59:16.622Z",
+    "action": "SUBMIT_REVIEW",
+    "shiftId": "SH1781290756597104",
+    "userId": "U004",
+    "userName": "赵中班",
+    "detail": "提交店长复核"
+  },
+  {
+    "id": "H178129075666988",
+    "timestamp": "2026-06-12T18:59:16.669Z",
+    "action": "CREATE_SHIFT",
+    "shiftId": "SH1781290756669468",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "创建班次 SH1781290756669468"
+  },
+  {
+    "id": "H1781290756673444",
+    "timestamp": "2026-06-12T18:59:16.673Z",
+    "action": "HANDOVER_SHIFT",
+    "shiftId": "SH1781290756669468",
+    "userId": "U003",
+    "userName": "王早班",
+    "detail": "提交交接，状态变为待确认"
+  },
+  {
+    "id": "H1781290756679432",
+    "timestamp": "2026-06-12T18:59:16.679Z",
+    "action": "CONFIRM_SHIFT",
+    "shiftId": "SH1781290756669468",
+    "userId": "U005",
+    "userName": "孙晚班",
+    "detail": "接班人确认交接完成"
+  }
+]

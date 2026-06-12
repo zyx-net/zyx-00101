@@ -1,0 +1,14 @@
+{
+  "checklist": [
+    { "id": "C001", "category": "现金", "name": "收银机现金清点", "required": true },
+    { "id": "C002", "category": "现金", "name": "备用金核对", "required": true },
+    { "id": "C003", "category": "现金", "name": "营业款缴存确认", "required": false },
+    { "id": "C004", "category": "库存", "name": "冷藏饮料库存盘点", "required": true },
+    { "id": "C005", "category": "库存", "name": "香烟库存盘点", "required": true },
+    { "id": "C006", "category": "库存", "name": "零食货架补货", "required": false },
+    { "id": "C007", "category": "设备", "name": "冷藏柜温度检查", "required": true },
+    { "id": "C008", "category": "设备", "name": "POS机运行状态", "required": true },
+    { "id": "C009", "category": "卫生", "name": "收银台清洁", "required": false },
+    { "id": "C010", "category": "卫生", "name": "店内地面清洁", "required": false }
+  ]
+}

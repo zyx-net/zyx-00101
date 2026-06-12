@@ -1,0 +1,10 @@
+{
+  "users": [
+    { "id": "U001", "username": "manager1", "password": "manager123", "role": "manager", "name": "张店长", "storeId": "S001" },
+    { "id": "U002", "username": "manager2", "password": "manager123", "role": "manager", "name": "李店长", "storeId": "S002" },
+    { "id": "U003", "username": "staff1", "password": "staff123", "role": "staff", "name": "王早班", "storeId": "S001" },
+    { "id": "U004", "username": "staff2", "password": "staff123", "role": "staff", "name": "赵中班", "storeId": "S001" },
+    { "id": "U005", "username": "staff3", "password": "staff123", "role": "staff", "name": "孙晚班", "storeId": "S001" },
+    { "id": "U006", "username": "staff4", "password": "staff123", "role": "staff", "name": "周员工", "storeId": "S002" }
+  ]
+}

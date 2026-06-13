@@ -1,9 +1,9 @@
 [
   {
-    "id": "SH1781294488787743",
+    "id": "SH1781314760381916",
     "storeId": "S001",
     "shiftType": "morning",
-    "shiftDate": "2026-06-12",
+    "shiftDate": "2026-06-13",
     "handoverStaffId": "U003",
     "handoverStaffName": "王早班",
     "receiveStaffId": "U004",
@@ -80,22 +80,22 @@
         "remark": ""
       }
     ],
-    "note": "main",
+    "note": "main test",
     "status": "closed",
-    "createdAt": "2026-06-12T20:01:28.787Z",
+    "createdAt": "2026-06-13T01:39:20.381Z",
     "createdBy": "U003",
-    "confirmedAt": "2026-06-12T20:01:28.796Z",
-    "reviewedAt": "2026-06-12T20:01:28.846Z",
-    "closedAt": "2026-06-12T20:01:28.846Z",
+    "confirmedAt": "2026-06-13T01:39:20.390Z",
+    "reviewedAt": "2026-06-13T01:39:20.454Z",
+    "closedAt": "2026-06-13T01:39:20.454Z",
     "reviewNote": "all good",
     "reviewedBy": "U001",
     "reviewedByName": "张店长"
   },
   {
-    "id": "SH178129448885044",
+    "id": "SH1781314760461227",
     "storeId": "S001",
     "shiftType": "evening",
-    "shiftDate": "2026-06-12",
+    "shiftDate": "2026-06-13",
     "handoverStaffId": "U003",
     "handoverStaffName": "王早班",
     "receiveStaffId": "U005",
@@ -172,11 +172,11 @@
         "remark": ""
       }
     ],
-    "note": "perm",
+    "note": "perm test",
     "status": "reviewing",
-    "createdAt": "2026-06-12T20:01:28.850Z",
+    "createdAt": "2026-06-13T01:39:20.461Z",
     "createdBy": "U003",
-    "confirmedAt": "2026-06-12T20:01:28.853Z",
+    "confirmedAt": "2026-06-13T01:39:20.466Z",
     "reviewedAt": null,
     "closedAt": null,
     "reviewNote": "",
@@ -184,101 +184,9 @@
     "reviewedByName": ""
   },
   {
-    "id": "SH1781294488862919",
+    "id": "SH1781314760478962",
     "storeId": "S001",
     "shiftType": "afternoon",
-    "shiftDate": "2026-06-12",
-    "handoverStaffId": "U003",
-    "handoverStaffName": "王早班",
-    "receiveStaffId": "U004",
-    "receiveStaffName": "赵中班",
-    "checklistItems": [
-      {
-        "id": "C001",
-        "name": "收银机现金清点",
-        "category": "现金",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C002",
-        "name": "备用金核对",
-        "category": "现金",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C003",
-        "name": "营业款缴存确认",
-        "category": "现金",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C004",
-        "name": "冷藏饮料库存盘点",
-        "category": "库存",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C005",
-        "name": "香烟库存盘点",
-        "category": "库存",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C006",
-        "name": "零食货架补货",
-        "category": "库存",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C007",
-        "name": "冷藏柜温度检查",
-        "category": "设备",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C008",
-        "name": "POS机运行状态",
-        "category": "设备",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C009",
-        "name": "收银台清洁",
-        "category": "卫生",
-        "checked": true,
-        "remark": ""
-      },
-      {
-        "id": "C010",
-        "name": "店内地面清洁",
-        "category": "卫生",
-        "checked": true,
-        "remark": ""
-      }
-    ],
-    "note": "dup",
-    "status": "reviewing",
-    "createdAt": "2026-06-12T20:01:28.862Z",
-    "createdBy": "U003",
-    "confirmedAt": "2026-06-12T20:01:28.865Z",
-    "reviewedAt": null,
-    "closedAt": null,
-    "reviewNote": "",
-    "reviewedBy": null,
-    "reviewedByName": ""
-  },
-  {
-    "id": "SH1781295610529486",
-    "storeId": "S001",
-    "shiftType": "??",
     "shiftDate": "2026-06-13",
     "handoverStaffId": "U003",
     "handoverStaffName": "王早班",
@@ -356,21 +264,113 @@
         "remark": ""
       }
     ],
-    "note": "review-main-chain",
-    "status": "closed",
-    "createdAt": "2026-06-12T20:20:10.529Z",
+    "note": "dup confirm test",
+    "status": "reviewing",
+    "createdAt": "2026-06-13T01:39:20.478Z",
     "createdBy": "U003",
-    "confirmedAt": "2026-06-12T20:20:10.536Z",
-    "reviewedAt": "2026-06-12T20:20:10.578Z",
-    "closedAt": "2026-06-12T20:20:10.578Z",
-    "reviewNote": "review-pass",
+    "confirmedAt": "2026-06-13T01:39:20.482Z",
+    "reviewedAt": null,
+    "closedAt": null,
+    "reviewNote": "",
+    "reviewedBy": null,
+    "reviewedByName": ""
+  },
+  {
+    "id": "SH1781314793075865",
+    "storeId": "S001",
+    "shiftType": "morning",
+    "shiftDate": "2026-06-13",
+    "handoverStaffId": "U003",
+    "handoverStaffName": "王早班",
+    "receiveStaffId": "U004",
+    "receiveStaffName": "赵中班",
+    "checklistItems": [
+      {
+        "id": "C001",
+        "name": "收银机现金清点",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C002",
+        "name": "备用金核对",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C003",
+        "name": "营业款缴存确认",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C004",
+        "name": "冷藏饮料库存盘点",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C005",
+        "name": "香烟库存盘点",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C006",
+        "name": "零食货架补货",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C007",
+        "name": "冷藏柜温度检查",
+        "category": "设备",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C008",
+        "name": "POS机运行状态",
+        "category": "设备",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C009",
+        "name": "收银台清洁",
+        "category": "卫生",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C010",
+        "name": "店内地面清洁",
+        "category": "卫生",
+        "checked": true,
+        "remark": ""
+      }
+    ],
+    "note": "main test",
+    "status": "closed",
+    "createdAt": "2026-06-13T01:39:53.075Z",
+    "createdBy": "U003",
+    "confirmedAt": "2026-06-13T01:39:53.086Z",
+    "reviewedAt": "2026-06-13T01:39:53.131Z",
+    "closedAt": "2026-06-13T01:39:53.131Z",
+    "reviewNote": "all good",
     "reviewedBy": "U001",
     "reviewedByName": "张店长"
   },
   {
-    "id": "SH1781295610556727",
+    "id": "SH17813147931404",
     "storeId": "S001",
-    "shiftType": "??",
+    "shiftType": "evening",
     "shiftDate": "2026-06-13",
     "handoverStaffId": "U003",
     "handoverStaffName": "王早班",
@@ -448,11 +448,103 @@
         "remark": ""
       }
     ],
-    "note": "cross-store-permission-check",
+    "note": "perm test",
     "status": "reviewing",
-    "createdAt": "2026-06-12T20:20:10.556Z",
+    "createdAt": "2026-06-13T01:39:53.140Z",
     "createdBy": "U003",
-    "confirmedAt": "2026-06-12T20:20:10.561Z",
+    "confirmedAt": "2026-06-13T01:39:53.148Z",
+    "reviewedAt": null,
+    "closedAt": null,
+    "reviewNote": "",
+    "reviewedBy": null,
+    "reviewedByName": ""
+  },
+  {
+    "id": "SH178131479316360",
+    "storeId": "S001",
+    "shiftType": "afternoon",
+    "shiftDate": "2026-06-13",
+    "handoverStaffId": "U003",
+    "handoverStaffName": "王早班",
+    "receiveStaffId": "U004",
+    "receiveStaffName": "赵中班",
+    "checklistItems": [
+      {
+        "id": "C001",
+        "name": "收银机现金清点",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C002",
+        "name": "备用金核对",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C003",
+        "name": "营业款缴存确认",
+        "category": "现金",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C004",
+        "name": "冷藏饮料库存盘点",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C005",
+        "name": "香烟库存盘点",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C006",
+        "name": "零食货架补货",
+        "category": "库存",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C007",
+        "name": "冷藏柜温度检查",
+        "category": "设备",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C008",
+        "name": "POS机运行状态",
+        "category": "设备",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C009",
+        "name": "收银台清洁",
+        "category": "卫生",
+        "checked": true,
+        "remark": ""
+      },
+      {
+        "id": "C010",
+        "name": "店内地面清洁",
+        "category": "卫生",
+        "checked": true,
+        "remark": ""
+      }
+    ],
+    "note": "dup confirm test",
+    "status": "reviewing",
+    "createdAt": "2026-06-13T01:39:53.163Z",
+    "createdBy": "U003",
+    "confirmedAt": "2026-06-13T01:39:53.172Z",
     "reviewedAt": null,
     "closedAt": null,
     "reviewNote": "",

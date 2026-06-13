@@ -41,6 +41,27 @@ const TASK_STATUS_MAP = {
   closed: { label: '已关闭', cls: 'badge-task-closed' }
 };
 
+const DEVICE_STATUS_MAP = {
+  normal: { label: '正常', cls: 'badge-normal' },
+  fault: { label: '故障', cls: 'badge-fault' },
+  maintenance: { label: '维护中', cls: 'badge-maintenance' },
+  scrapped: { label: '已报废', cls: 'badge-scrapped' }
+};
+
+const INSPECTION_STATUS_MAP = {
+  draft: { label: '草稿', cls: 'badge-draft' },
+  submitted: { label: '已提交', cls: 'badge-submitted' },
+  converted: { label: '已转维修', cls: 'badge-converted' }
+};
+
+const REPAIR_STATUS_MAP = {
+  reported: { label: '已报修', cls: 'badge-reported' },
+  accepted: { label: '已接单', cls: 'badge-accepted' },
+  completed: { label: '已完成', cls: 'badge-completed' },
+  verified: { label: '已验收', cls: 'badge-verified' },
+  rejected: { label: '已退回', cls: 'badge-rejected' }
+};
+
 const ACTION_MAP = {
   CREATE_SHIFT: '创建班次',
   HANDOVER_SHIFT: '提交交接',
@@ -55,7 +76,21 @@ const ACTION_MAP = {
   ASSIGN_TASK: '分派整改',
   SUBMIT_TASK: '提交整改',
   ACCEPT_TASK: '验收整改',
-  REJECT_TASK: '驳回整改'
+  REJECT_TASK: '驳回整改',
+  CREATE_DEVICE: '创建设备',
+  UPDATE_DEVICE: '修改设备',
+  DELETE_DEVICE: '删除设备',
+  IMPORT_DEVICE: '导入设备',
+  CREATE_TEMPLATE: '创建巡检模板',
+  UPDATE_TEMPLATE: '修改巡检模板',
+  DELETE_TEMPLATE: '删除巡检模板',
+  CREATE_INSPECTION: '创建巡检单',
+  SUBMIT_INSPECTION: '提交巡检单',
+  CREATE_REPAIR: '转报修',
+  ASSIGN_REPAIR: '分派维修',
+  COMPLETE_REPAIR: '完成维修',
+  VERIFY_REPAIR: '验收维修',
+  REJECT_REPAIR: '退回维修'
 };
 
 let state = {
@@ -192,6 +227,10 @@ function renderLayout() {
     case 'shifts': pageContent = renderShifts(); break;
     case 'exceptions': pageContent = renderExceptions(); break;
     case 'tasks': pageContent = renderTasks(); break;
+    case 'devices': pageContent = renderDevices(); break;
+    case 'templates': pageContent = renderTemplates(); break;
+    case 'inspections': pageContent = renderInspections(); break;
+    case 'repair-orders': pageContent = renderRepairOrders(); break;
     case 'history': pageContent = renderHistory(); break;
     default: pageContent = renderDashboard();
   }
@@ -212,6 +251,10 @@ function renderSidebar() {
     { key: 'shifts', label: '班次管理' },
     { key: 'exceptions', label: '异常管理' },
     { key: 'tasks', label: '整改任务' },
+    { key: 'devices', label: '设备管理' },
+    { key: 'templates', label: '巡检模板' },
+    { key: 'inspections', label: '巡检管理' },
+    { key: 'repair-orders', label: '维修单' },
     { key: 'history', label: '操作历史' }
   ];
   menus.forEach(m => {
@@ -755,6 +798,14 @@ function renderModal() {
     case 'closeException': content = renderCloseExceptionModal(); break;
     case 'createTask': content = renderCreateTaskModal(); break;
     case 'taskDetail': content = renderTaskDetailModal(); break;
+    case 'createDevice': content = renderCreateDeviceModal(); break;
+    case 'deviceDetail': content = renderDeviceDetailModal(); break;
+    case 'importDevice': content = renderImportDeviceModal(); break;
+    case 'createTemplate': content = renderCreateTemplateModal(); break;
+    case 'templateDetail': content = renderTemplateDetailModal(); break;
+    case 'createInspection': content = renderCreateInspectionModal(); break;
+    case 'inspectionDetail': content = renderInspectionDetailModal(); break;
+    case 'repairOrderDetail': content = renderRepairOrderDetailModal(); break;
     default: content = h('div', {}, '未知');
   }
   modal.appendChild(content);
@@ -1523,15 +1574,701 @@ function backFromException() {
 }
 
 function exportData(type, format) {
-  const storeInput = prompt('按门店ID导出（留空导出全部，例如 S001）：') || '';
   const params = new URLSearchParams();
-  if (storeInput) params.set('storeId', storeInput);
-  if (type !== 'tasks') {
+  params.set('format', format);
+  if (type === 'devices' || type === 'inspections' || type === 'repair-orders' || type === 'tasks') {
+    const statusInput = prompt('按状态导出（留空导出全部，如 normal/fault/draft/submitted/reported/accepted/completed）：') || '';
+    if (statusInput) params.set('status', statusInput);
+  }
+  if (type !== 'tasks' && type !== 'devices' && type !== 'repair-orders') {
+    const storeInput = prompt('按门店ID导出（留空导出全部，例如 S001）：') || '';
+    if (storeInput) params.set('storeId', storeInput);
     const dateInput = prompt('按日期导出（留空导出全部，格式 YYYY-MM-DD）：') || '';
     if (dateInput) params.set('date', dateInput);
+  } else if (type === 'devices' || type === 'repair-orders') {
+    const storeInput = prompt('按门店ID导出（留空导出全部，例如 S001）：') || '';
+    if (storeInput) params.set('storeId', storeInput);
   }
-  params.set('format', format);
   window.open('/api/export/' + type + '?' + params.toString(), '_blank');
+}
+
+function renderDevices() {
+  const wrap = h('div', {});
+  const header = h('div', { class: 'page-header' });
+  header.appendChild(h('h1', {}, '设备管理'));
+  const actions = h('div', { class: 'actions' });
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('devices', 'csv') }, '导出CSV'));
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('devices', 'json') }, '导出JSON'));
+  if (state.user.role === 'manager') {
+    actions.appendChild(h('button', { class: 'btn btn-primary btn-sm', onclick: () => { state.modal = { type: 'importDevice' }; render(); } }, 'CSV导入'));
+    actions.appendChild(h('button', { class: 'btn btn-primary btn-sm', onclick: () => { state.modal = { type: 'createDevice' }; render(); } }, '+ 新增设备'));
+  }
+  header.appendChild(actions);
+  wrap.appendChild(header);
+
+  const filter = h('div', { class: 'card' });
+  const fb = h('div', { class: 'filter-bar' });
+  const statusGroup = h('div', { class: 'form-group' });
+  statusGroup.appendChild(h('label', {}, '状态'));
+  const statusSel = h('select', {});
+  statusSel.appendChild(h('option', { value: '' }, '全部'));
+  Object.entries(DEVICE_STATUS_MAP).forEach(([k, v]) => statusSel.appendChild(h('option', { value: k }, v.label)));
+  statusGroup.appendChild(statusSel);
+  fb.appendChild(statusGroup);
+  const kwGroup = h('div', { class: 'form-group' });
+  kwGroup.appendChild(h('label', {}, '关键字'));
+  const kwInput = h('input', { type: 'text', placeholder: '编号/名称/位置' });
+  kwGroup.appendChild(kwInput);
+  fb.appendChild(kwGroup);
+  const queryBtn = h('button', { class: 'btn btn-primary btn-sm' }, '查询');
+  fb.appendChild(queryBtn);
+  filter.appendChild(fb);
+  wrap.appendChild(filter);
+
+  const listCard = h('div', { class: 'card' });
+  const tbody = h('tbody', {});
+  tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '加载中...')));
+  const table = h('table', {}, [
+    h('thead', {}, h('tr', {}, [
+      h('th', {}, '编号'), h('th', {}, '名称'), h('th', {}, '分类'), h('th', {}, '型号'),
+      h('th', {}, '位置'), h('th', {}, '状态'), h('th', {}, '创建时间'), h('th', {}, '操作')
+    ])),
+    tbody
+  ]);
+  listCard.appendChild(table);
+  wrap.appendChild(listCard);
+
+  async function loadData() {
+    try {
+      const params = new URLSearchParams();
+      if (statusSel.value) params.set('status', statusSel.value);
+      if (kwInput.value) params.set('keyword', kwInput.value);
+      const r = await API.get('/api/devices?' + params.toString());
+      tbody.innerHTML = '';
+      if (r.devices.length === 0) {
+        tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '暂无数据')));
+        return;
+      }
+      r.devices.forEach(d => {
+        const st = DEVICE_STATUS_MAP[d.status] || { label: d.status, cls: '' };
+        const ops = h('td', {});
+        ops.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.modal = { type: 'deviceDetail', deviceId: d.id }; render(); } }, '详情'));
+        if (state.user.role === 'manager' && d.storeId === state.user.storeId) {
+          ops.appendChild(h('button', { class: 'btn btn-danger btn-sm', style: 'margin-left:4px;', onclick: async () => {
+            if (!confirm('确定删除设备 ' + d.code + '？')) return;
+            try { await API.post('/api/devices/' + d.id + '?_method=DELETE', {}); toast('已删除', 'success'); loadData(); } catch (e) { toast(e.message); }
+          } }, '删除'));
+        }
+        tbody.appendChild(h('tr', {}, [
+          h('td', {}, d.code), h('td', {}, d.name), h('td', {}, d.category || '-'),
+          h('td', {}, d.model || '-'), h('td', {}, d.location || '-'),
+          h('td', {}, h('span', { class: 'badge ' + st.cls }, st.label)),
+          h('td', {}, formatDate(d.createdAt)), ops
+        ]));
+      });
+    } catch (e) { toast(e.message); }
+  }
+  queryBtn.onclick = loadData;
+  setTimeout(loadData, 0);
+  return wrap;
+}
+
+function renderTemplates() {
+  const wrap = h('div', {});
+  const header = h('div', { class: 'page-header' });
+  header.appendChild(h('h1', {}, '巡检模板'));
+  if (state.user.role === 'manager') {
+    const actions = h('div', { class: 'actions' });
+    actions.appendChild(h('button', { class: 'btn btn-primary btn-sm', onclick: () => { state.modal = { type: 'createTemplate' }; render(); } }, '+ 新增模板'));
+    header.appendChild(actions);
+  }
+  wrap.appendChild(header);
+
+  const listCard = h('div', { class: 'card' });
+  const tbody = h('tbody', {});
+  tbody.appendChild(h('tr', {}, h('td', { colspan: '6', style: 'text-align:center;padding:40px;color:#6b7280;' }, '加载中...')));
+  const table = h('table', {}, [
+    h('thead', {}, h('tr', {}, [
+      h('th', {}, '模板ID'), h('th', {}, '名称'), h('th', {}, '描述'), h('th', {}, '巡检项数'),
+      h('th', {}, '创建时间'), h('th', {}, '操作')
+    ])),
+    tbody
+  ]);
+  listCard.appendChild(table);
+  wrap.appendChild(listCard);
+
+  API.get('/api/inspection-templates').then(r => {
+    tbody.innerHTML = '';
+    if (r.templates.length === 0) {
+      tbody.appendChild(h('tr', {}, h('td', { colspan: '6', style: 'text-align:center;padding:40px;color:#6b7280;' }, '暂无数据')));
+      return;
+    }
+    r.templates.forEach(t => {
+      const ops = h('td', {});
+      ops.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.modal = { type: 'templateDetail', templateId: t.id }; render(); } }, '详情'));
+      if (state.user.role === 'manager' && t.storeId === state.user.storeId) {
+        ops.appendChild(h('button', { class: 'btn btn-danger btn-sm', style: 'margin-left:4px;', onclick: async () => {
+          if (!confirm('确定删除模板 ' + t.name + '？')) return;
+          try { await API.post('/api/inspection-templates/' + t.id + '?_method=DELETE', {}); toast('已删除', 'success'); render(); } catch (e) { toast(e.message); }
+        } }, '删除'));
+      }
+      tbody.appendChild(h('tr', {}, [
+        h('td', {}, t.id), h('td', {}, t.name), h('td', {}, t.description || '-'),
+        h('td', {}, String((t.items || []).length)), h('td', {}, formatDate(t.createdAt)), ops
+      ]));
+    });
+  }).catch(e => toast(e.message));
+  return wrap;
+}
+
+function renderInspections() {
+  const wrap = h('div', {});
+  const header = h('div', { class: 'page-header' });
+  header.appendChild(h('h1', {}, '巡检管理'));
+  const actions = h('div', { class: 'actions' });
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('inspections', 'csv') }, '导出CSV'));
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('inspections', 'json') }, '导出JSON'));
+  actions.appendChild(h('button', { class: 'btn btn-primary btn-sm', onclick: () => { state.modal = { type: 'createInspection' }; render(); } }, '+ 创建巡检单'));
+  header.appendChild(actions);
+  wrap.appendChild(header);
+
+  const filter = h('div', { class: 'card' });
+  const fb = h('div', { class: 'filter-bar' });
+  const statusGroup = h('div', { class: 'form-group' });
+  statusGroup.appendChild(h('label', {}, '状态'));
+  const statusSel = h('select', {});
+  statusSel.appendChild(h('option', { value: '' }, '全部'));
+  Object.entries(INSPECTION_STATUS_MAP).forEach(([k, v]) => statusSel.appendChild(h('option', { value: k }, v.label)));
+  statusGroup.appendChild(statusSel);
+  fb.appendChild(statusGroup);
+  const queryBtn = h('button', { class: 'btn btn-primary btn-sm' }, '查询');
+  fb.appendChild(queryBtn);
+  filter.appendChild(fb);
+  wrap.appendChild(filter);
+
+  const listCard = h('div', { class: 'card' });
+  const tbody = h('tbody', {});
+  tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '加载中...')));
+  const table = h('table', {}, [
+    h('thead', {}, h('tr', {}, [
+      h('th', {}, '巡检单ID'), h('th', {}, '班次'), h('th', {}, '巡检日期'), h('th', {}, '模板'),
+      h('th', {}, '巡检人'), h('th', {}, '异常项'), h('th', {}, '状态'), h('th', {}, '操作')
+    ])),
+    tbody
+  ]);
+  listCard.appendChild(table);
+  wrap.appendChild(listCard);
+
+  async function loadData() {
+    try {
+      const params = new URLSearchParams();
+      if (statusSel.value) params.set('status', statusSel.value);
+      const r = await API.get('/api/inspections?' + params.toString());
+      tbody.innerHTML = '';
+      if (r.inspections.length === 0) {
+        tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '暂无数据')));
+        return;
+      }
+      r.inspections.forEach(ins => {
+        const st = INSPECTION_STATUS_MAP[ins.status] || { label: ins.status, cls: '' };
+        const abnormal = (ins.items || []).filter(it => it.result === 'abnormal').length;
+        tbody.appendChild(h('tr', {}, [
+          h('td', {}, ins.id), h('td', {}, ins.shiftType + ' ' + ins.shiftDate),
+          h('td', {}, ins.inspectionDate), h('td', {}, ins.templateName),
+          h('td', {}, ins.inspectorName), h('td', {}, String(abnormal)),
+          h('td', {}, h('span', { class: 'badge ' + st.cls }, st.label)),
+          h('td', {}, h('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.modal = { type: 'inspectionDetail', inspectionId: ins.id }; render(); } }, '详情'))
+        ]));
+      });
+    } catch (e) { toast(e.message); }
+  }
+  queryBtn.onclick = loadData;
+  setTimeout(loadData, 0);
+  return wrap;
+}
+
+function renderRepairOrders() {
+  const wrap = h('div', {});
+  const header = h('div', { class: 'page-header' });
+  header.appendChild(h('h1', {}, '维修单'));
+  const actions = h('div', { class: 'actions' });
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('repair-orders', 'csv') }, '导出CSV'));
+  actions.appendChild(h('button', { class: 'btn btn-outline btn-sm', onclick: () => exportData('repair-orders', 'json') }, '导出JSON'));
+  header.appendChild(actions);
+  wrap.appendChild(header);
+
+  const filter = h('div', { class: 'card' });
+  const fb = h('div', { class: 'filter-bar' });
+  const statusGroup = h('div', { class: 'form-group' });
+  statusGroup.appendChild(h('label', {}, '状态'));
+  const statusSel = h('select', {});
+  statusSel.appendChild(h('option', { value: '' }, '全部'));
+  Object.entries(REPAIR_STATUS_MAP).forEach(([k, v]) => statusSel.appendChild(h('option', { value: k }, v.label)));
+  statusGroup.appendChild(statusSel);
+  fb.appendChild(statusGroup);
+  const mineGroup = h('div', { class: 'form-group' });
+  mineGroup.appendChild(h('label', {}, '范围'));
+  const mineSel = h('select', {});
+  mineSel.appendChild(h('option', { value: '' }, '全部'));
+  mineSel.appendChild(h('option', { value: '1' }, '待我处理'));
+  mineGroup.appendChild(mineSel);
+  fb.appendChild(mineGroup);
+  const queryBtn = h('button', { class: 'btn btn-primary btn-sm' }, '查询');
+  fb.appendChild(queryBtn);
+  filter.appendChild(fb);
+  wrap.appendChild(filter);
+
+  const listCard = h('div', { class: 'card' });
+  const tbody = h('tbody', {});
+  tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '加载中...')));
+  const table = h('table', {}, [
+    h('thead', {}, h('tr', {}, [
+      h('th', {}, '维修单ID'), h('th', {}, '设备'), h('th', {}, '标题'), h('th', {}, '接修人'),
+      h('th', {}, '状态'), h('th', {}, '报修人'), h('th', {}, '报修时间'), h('th', {}, '操作')
+    ])),
+    tbody
+  ]);
+  listCard.appendChild(table);
+  wrap.appendChild(listCard);
+
+  async function loadData() {
+    try {
+      const params = new URLSearchParams();
+      if (statusSel.value) params.set('status', statusSel.value);
+      if (mineSel.value) params.set('mine', mineSel.value);
+      const r = await API.get('/api/repair-orders?' + params.toString());
+      tbody.innerHTML = '';
+      if (r.repairOrders.length === 0) {
+        tbody.appendChild(h('tr', {}, h('td', { colspan: '8', style: 'text-align:center;padding:40px;color:#6b7280;' }, '暂无数据')));
+        return;
+      }
+      r.repairOrders.forEach(o => {
+        const st = REPAIR_STATUS_MAP[o.status] || { label: o.status, cls: '' };
+        tbody.appendChild(h('tr', {}, [
+          h('td', {}, o.id), h('td', {}, o.deviceCode + ' ' + o.deviceName),
+          h('td', {}, o.title || '-'), h('td', {}, o.assigneeName || '未分派'),
+          h('td', {}, h('span', { class: 'badge ' + st.cls }, st.label)),
+          h('td', {}, o.createdByName || '-'), h('td', {}, formatDate(o.createdAt)),
+          h('td', {}, h('button', { class: 'btn btn-outline btn-sm', onclick: () => { state.modal = { type: 'repairOrderDetail', repairOrderId: o.id }; render(); } }, '详情'))
+        ]));
+      });
+    } catch (e) { toast(e.message); }
+  }
+  queryBtn.onclick = loadData;
+  setTimeout(loadData, 0);
+  return wrap;
+}
+
+function renderCreateDeviceModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '新增设备'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' });
+  const codeGroup = h('div', { class: 'form-group' });
+  codeGroup.appendChild(h('label', {}, '设备编号 *'));
+  const codeInput = h('input', { type: 'text', placeholder: '如 POS-001', required: 'required' });
+  codeGroup.appendChild(codeInput);
+  body.appendChild(codeGroup);
+  const nameGroup = h('div', { class: 'form-group' });
+  nameGroup.appendChild(h('label', {}, '设备名称 *'));
+  const nameInput = h('input', { type: 'text', placeholder: '如 收银机', required: 'required' });
+  nameGroup.appendChild(nameInput);
+  body.appendChild(nameGroup);
+  const row1 = h('div', { class: 'row' });
+  const catGroup = h('div', { class: 'form-group' });
+  catGroup.appendChild(h('label', {}, '分类'));
+  const catInput = h('input', { type: 'text', placeholder: '如 IT设备、制冷设备' });
+  catGroup.appendChild(catInput);
+  row1.appendChild(catGroup);
+  const modelGroup = h('div', { class: 'form-group' });
+  modelGroup.appendChild(h('label', {}, '型号'));
+  const modelInput = h('input', { type: 'text', placeholder: '设备型号' });
+  modelGroup.appendChild(modelInput);
+  row1.appendChild(modelGroup);
+  body.appendChild(row1);
+  const locGroup = h('div', { class: 'form-group' });
+  locGroup.appendChild(h('label', {}, '位置'));
+  const locInput = h('input', { type: 'text', placeholder: '如 收银台1号位' });
+  locGroup.appendChild(locInput);
+  body.appendChild(locGroup);
+  const row2 = h('div', { class: 'row' });
+  const pdGroup = h('div', { class: 'form-group' });
+  pdGroup.appendChild(h('label', {}, '购买日期'));
+  const pdInput = h('input', { type: 'date' });
+  pdGroup.appendChild(pdInput);
+  row2.appendChild(pdGroup);
+  const noteGroup = h('div', { class: 'form-group' });
+  noteGroup.appendChild(h('label', {}, '备注'));
+  const noteInput = h('input', { type: 'text', placeholder: '可选' });
+  noteGroup.appendChild(noteInput);
+  row2.appendChild(noteGroup);
+  body.appendChild(row2);
+  wrap.appendChild(body);
+  const footer = h('div', { class: 'modal-footer' });
+  footer.appendChild(h('button', { class: 'btn btn-outline', onclick: closeModal }, '取消'));
+  footer.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+    if (!codeInput.value || !nameInput.value) { toast('编号和名称必填'); return; }
+    try {
+      await API.post('/api/devices', { code: codeInput.value, name: nameInput.value, category: catInput.value, model: modelInput.value, location: locInput.value, purchaseDate: pdInput.value, note: noteInput.value });
+      toast('设备已创建', 'success'); closeModal();
+    } catch (e) { toast(e.message); }
+  } }, '创建'));
+  wrap.appendChild(footer);
+  return wrap;
+}
+
+function renderDeviceDetailModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '设备详情'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+  API.get('/api/devices/' + state.modal.deviceId).then(r => {
+    const d = r.device;
+    body.innerHTML = '';
+    const st = DEVICE_STATUS_MAP[d.status] || { label: d.status, cls: '' };
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '基本信息'));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '编号'), h('div', { class: 'value' }, d.code)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '名称'), h('div', { class: 'value' }, d.name)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '分类'), h('div', { class: 'value' }, d.category || '-')]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '型号'), h('div', { class: 'value' }, d.model || '-')]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '位置'), h('div', { class: 'value' }, d.location || '-')]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '状态'), h('div', { class: 'value' }, h('span', { class: 'badge ' + st.cls }, st.label))]));
+    if (d.purchaseDate) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '购买日期'), h('div', { class: 'value' }, d.purchaseDate)]));
+    if (d.note) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '备注'), h('div', { class: 'value' }, d.note)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '创建人'), h('div', { class: 'value' }, d.createdByName)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '创建时间'), h('div', { class: 'value' }, formatDate(d.createdAt))]));
+    body.appendChild(card);
+  }).catch(e => toast(e.message));
+  return wrap;
+}
+
+function renderImportDeviceModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, 'CSV批量导入设备'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' });
+  body.appendChild(h('p', { style: 'font-size:13px;color:#6b7280;margin-bottom:12px;' }, 'CSV表头：设备编号,设备名称,分类,型号,位置,购买日期,备注。重复编号将跳过并保留原数据。'));
+  const csvGroup = h('div', { class: 'form-group' });
+  csvGroup.appendChild(h('label', {}, 'CSV内容'));
+  const csvInput = h('textarea', { placeholder: '设备编号,设备名称,分类,型号,位置,购买日期,备注\nPOS-001,收银机1号,IT设备,HP-500,收银台1号,2024-01-15,主收银', style: 'min-height:160px;font-family:monospace;' });
+  csvGroup.appendChild(csvInput);
+  body.appendChild(csvGroup);
+  const resultDiv = h('div', { style: 'margin-top:12px;' });
+  body.appendChild(resultDiv);
+  wrap.appendChild(body);
+  const footer = h('div', { class: 'modal-footer' });
+  footer.appendChild(h('button', { class: 'btn btn-outline', onclick: closeModal }, '取消'));
+  footer.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+    if (!csvInput.value.trim()) { toast('CSV内容为空'); return; }
+    try {
+      const r = await API.post('/api/devices/import/csv', { csvText: csvInput.value });
+      resultDiv.innerHTML = '';
+      resultDiv.appendChild(h('div', { style: 'color:#059669;font-weight:500;' }, '导入成功：' + r.totalImported + ' 条'));
+      if (r.totalSkipped > 0) {
+        resultDiv.appendChild(h('div', { style: 'color:#d97706;margin-top:4px;' }, '跳过：' + r.totalSkipped + ' 条'));
+        r.skipped.forEach(s => {
+          resultDiv.appendChild(h('div', { style: 'font-size:12px;color:#6b7280;margin-top:2px;' }, (s.row['设备编号'] || s.row['code'] || '?') + ' - ' + s.reason));
+        });
+      }
+      toast('导入完成', 'success');
+    } catch (e) { toast(e.message); }
+  } }, '导入'));
+  wrap.appendChild(footer);
+  return wrap;
+}
+
+function renderCreateTemplateModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '新增巡检模板'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' });
+  const nameGroup = h('div', { class: 'form-group' });
+  nameGroup.appendChild(h('label', {}, '模板名称 *'));
+  const nameInput = h('input', { type: 'text', placeholder: '如 每日设备巡检', required: 'required' });
+  nameGroup.appendChild(nameInput);
+  body.appendChild(nameGroup);
+  const descGroup = h('div', { class: 'form-group' });
+  descGroup.appendChild(h('label', {}, '描述'));
+  const descInput = h('textarea', { placeholder: '模板用途说明' });
+  descGroup.appendChild(descInput);
+  body.appendChild(descGroup);
+  body.appendChild(h('h3', { style: 'margin:12px 0 8px;' }, '巡检项'));
+  const itemsDiv = h('div', { id: 'tpl-items' });
+  body.appendChild(itemsDiv);
+  const addItemBtn = h('button', { class: 'btn btn-outline btn-sm', style: 'margin-top:8px;', onclick: () => {
+    const row = h('div', { style: 'display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;' });
+    const nameIn = h('input', { type: 'text', placeholder: '项名称 *', style: 'flex:2;' });
+    const catIn = h('input', { type: 'text', placeholder: '分类', style: 'flex:1;' });
+    const descIn = h('input', { type: 'text', placeholder: '说明', style: 'flex:2;' });
+    row.appendChild(nameIn); row.appendChild(catIn); row.appendChild(descIn);
+    itemsDiv.appendChild(row);
+  } }, '+ 添加巡检项'));
+  body.appendChild(addItemBtn);
+  addItemBtn.onclick();
+  addItemBtn.onclick();
+  addItemBtn.onclick();
+  wrap.appendChild(body);
+  const footer = h('div', { class: 'modal-footer' });
+  footer.appendChild(h('button', { class: 'btn btn-outline', onclick: closeModal }, '取消'));
+  footer.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+    if (!nameInput.value) { toast('模板名称必填'); return; }
+    const itemRows = itemsDiv.children;
+    const items = [];
+    for (let i = 0; i < itemRows.length; i++) {
+      const inputs = itemRows[i].querySelectorAll('input');
+      if (inputs[0].value.trim()) items.push({ name: inputs[0].value, category: inputs[1].value, description: inputs[2].value });
+    }
+    if (items.length === 0) { toast('至少添加一个巡检项'); return; }
+    try {
+      await API.post('/api/inspection-templates', { name: nameInput.value, description: descInput.value, items });
+      toast('模板已创建', 'success'); closeModal();
+    } catch (e) { toast(e.message); }
+  } }, '创建'));
+  wrap.appendChild(footer);
+  return wrap;
+}
+
+function renderTemplateDetailModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '巡检模板详情'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+  API.get('/api/inspection-templates/' + state.modal.templateId).then(r => {
+    const t = r.template;
+    body.innerHTML = '';
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '基本信息'));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '模板ID'), h('div', { class: 'value' }, t.id)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '名称'), h('div', { class: 'value' }, t.name)]));
+    if (t.description) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '描述'), h('div', { class: 'value' }, t.description)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '创建人'), h('div', { class: 'value' }, t.createdByName)]));
+    body.appendChild(card);
+    const itemsCard = h('div', { style: 'margin-top:16px;' });
+    itemsCard.appendChild(h('h3', {}, '巡检项列表'));
+    (t.items || []).forEach((it, i) => {
+      itemsCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '#' + (i + 1)), h('div', { class: 'value' }, it.name + (it.category ? ' [' + it.category + ']' : '') + (it.description ? ' - ' + it.description : ''))]));
+    });
+    body.appendChild(itemsCard);
+  }).catch(e => toast(e.message));
+  return wrap;
+}
+
+function renderCreateInspectionModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '创建巡检单'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+  Promise.all([API.get('/api/shifts'), API.get('/api/inspection-templates')]).then(([shiftsR, tplsR]) => {
+    body.innerHTML = '';
+    const shiftGroup = h('div', { class: 'form-group' });
+    shiftGroup.appendChild(h('label', {}, '选择班次 *'));
+    const shiftSel = h('select', { required: 'required' });
+    shiftSel.appendChild(h('option', { value: '' }, '请选择'));
+    shiftsR.shifts.filter(s => s.status !== 'closed').forEach(s => {
+      const store = state.stores.find(x => x.id === s.storeId);
+      shiftSel.appendChild(h('option', { value: s.id }, s.id + ' ' + s.shiftType + ' ' + s.shiftDate + (store ? ' (' + store.name + ')' : '')));
+    });
+    shiftGroup.appendChild(shiftSel);
+    body.appendChild(shiftGroup);
+
+    const tplGroup = h('div', { class: 'form-group' });
+    tplGroup.appendChild(h('label', {}, '巡检模板 *'));
+    const tplSel = h('select', { required: 'required' });
+    tplSel.appendChild(h('option', { value: '' }, '请选择'));
+    tplsR.templates.forEach(t => tplSel.appendChild(h('option', { value: t.id }, t.name + ' (' + t.items.length + '项)')));
+    tplGroup.appendChild(tplSel);
+    body.appendChild(tplGroup);
+
+    const dateGroup = h('div', { class: 'form-group' });
+    dateGroup.appendChild(h('label', {}, '巡检日期'));
+    const dateInput = h('input', { type: 'date', value: new Date().toISOString().slice(0, 10) });
+    dateGroup.appendChild(dateInput);
+    body.appendChild(dateGroup);
+
+    const footer = h('div', { class: 'modal-footer' });
+    footer.appendChild(h('button', { class: 'btn btn-outline', onclick: closeModal }, '取消'));
+    footer.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+      if (!shiftSel.value || !tplSel.value) { toast('班次和模板必选'); return; }
+      try {
+        await API.post('/api/inspections', { shiftId: shiftSel.value, templateId: tplSel.value, inspectionDate: dateInput.value });
+        toast('巡检单已创建', 'success'); closeModal();
+      } catch (e) { toast(e.message); }
+    } }, '创建'));
+    wrap.appendChild(footer);
+  }).catch(e => toast(e.message));
+  return wrap;
+}
+
+function renderInspectionDetailModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '巡检单详情'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+  API.get('/api/inspections/' + state.modal.inspectionId).then(r => {
+    const ins = r.inspection;
+    body.innerHTML = '';
+    const st = INSPECTION_STATUS_MAP[ins.status] || { label: ins.status, cls: '' };
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '基本信息'));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '巡检单ID'), h('div', { class: 'value' }, ins.id)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '班次'), h('div', { class: 'value' }, ins.shiftType + ' ' + ins.shiftDate)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '模板'), h('div', { class: 'value' }, ins.templateName)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '巡检人'), h('div', { class: 'value' }, ins.inspectorName)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '状态'), h('div', { class: 'value' }, h('span', { class: 'badge ' + st.cls }, st.label))]));
+    body.appendChild(card);
+
+    const itemsCard = h('div', { style: 'margin-top:16px;' });
+    itemsCard.appendChild(h('h3', {}, '巡检项'));
+    const itemChanges = [];
+    (ins.items || []).forEach((it, i) => {
+      const row = h('div', { style: 'border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-bottom:8px;' });
+      const header = h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;' });
+      header.appendChild(h('div', { style: 'font-weight:500;' }, it.deviceCode + ' - ' + it.templateItemName));
+      if (it.result) {
+        header.appendChild(h('span', { class: 'badge ' + (it.result === 'normal' ? 'badge-normal' : 'badge-fault') }, it.result === 'normal' ? '正常' : '异常'));
+      }
+      row.appendChild(header);
+      if (ins.status === 'draft') {
+        const resultRow = h('div', { style: 'display:flex;gap:8px;margin-bottom:6px;' });
+        const normalBtn = h('button', { class: 'btn btn-sm ' + (it.result === 'normal' ? 'btn-success' : 'btn-outline'), onclick: () => { it.result = 'normal'; renderInspectionDetailModal_update(ins, body, itemChanges); } }, '正常');
+        const abnormalBtn = h('button', { class: 'btn btn-sm ' + (it.result === 'abnormal' ? 'btn-danger' : 'btn-outline'), onclick: () => { it.result = 'abnormal'; renderInspectionDetailModal_update(ins, body, itemChanges); } }, '异常');
+        resultRow.appendChild(normalBtn); resultRow.appendChild(abnormalBtn);
+        row.appendChild(resultRow);
+        const attachRow = h('div', { style: 'margin-bottom:4px;' });
+        attachRow.appendChild(h('input', { type: 'text', placeholder: '附件说明', value: it.attachmentNote || '', style: 'width:100%;', oninput: (e) => { it.attachmentNote = e.target.value; } }));
+        row.appendChild(attachRow);
+        const tempRow = h('div', {});
+        tempRow.appendChild(h('input', { type: 'text', placeholder: '临时处理结果', value: it.tempHandling || '', style: 'width:100%;', oninput: (e) => { it.tempHandling = e.target.value; } }));
+        row.appendChild(tempRow);
+      } else {
+        if (it.attachmentNote) row.appendChild(h('div', { style: 'font-size:12px;color:#6b7280;' }, '附件说明: ' + it.attachmentNote));
+        if (it.tempHandling) row.appendChild(h('div', { style: 'font-size:12px;color:#6b7280;' }, '临时处理: ' + it.tempHandling));
+      }
+      itemsCard.appendChild(row);
+    });
+    body.appendChild(itemsCard);
+
+    const actionsBar = h('div', { style: 'margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;' });
+    if (ins.status === 'draft' && (ins.inspectorId === state.user.id || state.user.role === 'manager')) {
+      actionsBar.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+        const items = ins.items.map(it => ({ id: it.id, result: it.result, attachmentNote: it.attachmentNote, tempHandling: it.tempHandling }));
+        try {
+          await API.put('/api/inspections/' + ins.id, { items, status: 'submitted', updatedAt: ins.updatedAt });
+          toast('巡检单已提交', 'success'); state.modal = { type: 'inspectionDetail', inspectionId: ins.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '提交巡检单'));
+      actionsBar.appendChild(h('button', { class: 'btn btn-outline', onclick: async () => {
+        const items = ins.items.map(it => ({ id: it.id, result: it.result, attachmentNote: it.attachmentNote, tempHandling: it.tempHandling }));
+        try {
+          await API.put('/api/inspections/' + ins.id, { items, updatedAt: ins.updatedAt });
+          toast('已保存', 'success'); state.modal = { type: 'inspectionDetail', inspectionId: ins.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '保存草稿'));
+    }
+    if (ins.status === 'submitted') {
+      const abnormalItems = ins.items.filter(it => it.result === 'abnormal');
+      if (abnormalItems.length > 0) {
+        actionsBar.appendChild(h('button', { class: 'btn btn-danger', onclick: async () => {
+          try {
+            await API.post('/api/inspections/' + ins.id + '/convert-to-repair', { itemIds: abnormalItems.map(it => it.id) });
+            toast('已转维修单', 'success'); state.modal = { type: 'inspectionDetail', inspectionId: ins.id }; render();
+          } catch (e) { toast(e.message); }
+        } }, '转维修单（' + abnormalItems.length + '项异常）'));
+      }
+    }
+    if (actionsBar.children.length > 0) body.appendChild(actionsBar);
+  }).catch(e => toast(e.message));
+  return wrap;
+}
+
+function renderRepairOrderDetailModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [h('h2', {}, '维修单详情'), h('button', { class: 'modal-close', onclick: closeModal }, '×')]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+  API.get('/api/repair-orders/' + state.modal.repairOrderId).then(r => {
+    const o = r.repairOrder;
+    body.innerHTML = '';
+    const st = REPAIR_STATUS_MAP[o.status] || { label: o.status, cls: '' };
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '基本信息'));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '维修单ID'), h('div', { class: 'value' }, o.id)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '设备'), h('div', { class: 'value' }, o.deviceCode + ' ' + o.deviceName)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '位置'), h('div', { class: 'value' }, o.deviceLocation || '-')]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '标题'), h('div', { class: 'value' }, o.title)]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '描述'), h('div', { class: 'value' }, o.description || '-')]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '状态'), h('div', { class: 'value' }, h('span', { class: 'badge ' + st.cls }, st.label))]));
+    card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '报修人'), h('div', { class: 'value' }, o.createdByName)]));
+    if (o.assigneeName) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '接修人'), h('div', { class: 'value' }, o.assigneeName)]));
+    if (o.completedNote) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '完成说明'), h('div', { class: 'value' }, o.completedNote)]));
+    if (o.verifiedNote) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '验收说明'), h('div', { class: 'value' }, o.verifiedNote)]));
+    if (o.rejectedNote) card.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '退回原因'), h('div', { class: 'value' }, o.rejectedNote)]));
+    body.appendChild(card);
+
+    if (o.abnormalItems && o.abnormalItems.length > 0) {
+      const abnCard = h('div', { style: 'margin-top:16px;' });
+      abnCard.appendChild(h('h3', {}, '异常项'));
+      o.abnormalItems.forEach(it => {
+        abnCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, it.templateItemName), h('div', { class: 'value' }, (it.attachmentNote || '-') + (it.tempHandling ? ' [临时处理: ' + it.tempHandling + ']' : '')]));
+      });
+      body.appendChild(abnCard);
+    }
+
+    const histCard = h('div', { style: 'margin-top:16px;' });
+    histCard.appendChild(h('h3', {}, '状态历史'));
+    const histBody = h('div', {});
+    (o.statusHistory || []).forEach(item => {
+      const hi = h('div', { class: 'history-item' });
+      hi.appendChild(h('div', { class: 'hi-time' }, formatDate(item.at)));
+      const label = (REPAIR_STATUS_MAP[item.status] || { label: item.status }).label;
+      hi.appendChild(h('div', { class: 'hi-action' }, label));
+      hi.appendChild(h('div', { class: 'hi-user' }, item.byName));
+      hi.appendChild(h('div', { class: 'hi-detail' }, item.note || '-'));
+      histBody.appendChild(hi);
+    });
+    histCard.appendChild(histBody);
+    body.appendChild(histCard);
+
+    const actionsBar = h('div', { style: 'margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;' });
+    if ((o.status === 'reported' || o.status === 'rejected') && state.user.role === 'manager' && o.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', { class: 'btn btn-primary', onclick: async () => {
+        const storeUsers = state.users.filter(u => u.storeId === state.user.storeId && u.role === 'staff');
+        const names = storeUsers.map(u => u.id + ':' + u.name).join('\n');
+        const assigneeId = prompt('选择接修人（输入用户ID）:\n' + names);
+        if (!assigneeId) return;
+        try {
+          await API.post('/api/repair-orders/' + o.id + '/assign', { assigneeId, note: '', updatedAt: o.updatedAt });
+          toast('已分派', 'success'); state.modal = { type: 'repairOrderDetail', repairOrderId: o.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '分派维修'));
+    }
+    if ((o.status === 'accepted' || o.status === 'rejected') && (o.assigneeId === state.user.id || state.user.role === 'manager') && o.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', { class: 'btn btn-success', onclick: async () => {
+        const note = prompt('请填写维修完成说明：') || '';
+        try {
+          await API.post('/api/repair-orders/' + o.id + '/complete', { completedNote: note, updatedAt: o.updatedAt });
+          toast('维修已完成', 'success'); state.modal = { type: 'repairOrderDetail', repairOrderId: o.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '完成维修'));
+    }
+    if (o.status === 'completed' && state.user.role === 'manager' && o.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', { class: 'btn btn-success', onclick: async () => {
+        const note = prompt('验收意见（可选）：') || '';
+        try {
+          await API.post('/api/repair-orders/' + o.id + '/verify', { verifiedNote: note, updatedAt: o.updatedAt });
+          toast('验收通过', 'success'); state.modal = { type: 'repairOrderDetail', repairOrderId: o.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '验收关闭'));
+      actionsBar.appendChild(h('button', { class: 'btn btn-danger', onclick: async () => {
+        const note = prompt('退回原因：');
+        if (note == null) return;
+        try {
+          await API.post('/api/repair-orders/' + o.id + '/reject', { rejectedNote: note, updatedAt: o.updatedAt });
+          toast('已退回', 'success'); state.modal = { type: 'repairOrderDetail', repairOrderId: o.id }; render();
+        } catch (e) { toast(e.message); }
+      } }, '退回'));
+    }
+    if (actionsBar.children.length > 0) body.appendChild(actionsBar);
+  }).catch(e => toast(e.message));
+  return wrap;
 }
 
 bootstrap();

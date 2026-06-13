@@ -25,6 +25,17 @@ const EXCEPTION_STATUS = {
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  if (req.body && req.body._method) {
+    req.method = req.body._method.toUpperCase();
+    delete req.body._method;
+  }
+  if (req.query._method) {
+    req.method = req.query._method.toUpperCase();
+    delete req.query._method;
+  }
+  next();
+});
 app.use(session({
   secret: 'store-shift-secret-key-2024',
   resave: false,
@@ -341,7 +352,7 @@ app.post('/api/exceptions', requireAuth, (req, res) => {
   if (shift.status === SHIFT_STATUS.CLOSED) {
     return res.status(400).json({ error: '班次已关闭，不可新增异常' });
   }
-  if (req.session.user.role === 'staff' && shift.storeId !== req.session.user.storeId) {
+  if (shift.storeId !== req.session.user.storeId) {
     return res.status(403).json({ error: '仅可为本门店班次登记异常' });
   }
   const users = db.getUsers();
@@ -632,7 +643,7 @@ app.get('/api/tasks', requireAuth, (req, res) => {
 app.get('/api/tasks/:id', requireAuth, (req, res) => {
   const task = db.getTasks().find(t => t.id === req.params.id);
   if (!task) return res.status(404).json({ error: '整改任务不存在' });
-  if (req.session.user.role === 'staff' && task.storeId !== req.session.user.storeId) {
+  if (task.storeId !== req.session.user.storeId) {
     return res.status(403).json({ error: '无权查看非本门店整改任务' });
   }
   res.json({ task });
@@ -645,7 +656,7 @@ app.post('/api/tasks', requireAuth, (req, res) => {
   if (!ex) return res.status(404).json({ error: '关联异常不存在' });
   const shift = db.getShifts().find(s => s.id === ex.shiftId);
   if (!shift) return res.status(404).json({ error: '关联班次不存在' });
-  if (req.session.user.role === 'staff' && shift.storeId !== req.session.user.storeId) {
+  if (shift.storeId !== req.session.user.storeId) {
     return res.status(403).json({ error: '仅可为本门店异常发起整改' });
   }
   const existing = db.getTasks().find(t => t.exceptionId === exceptionId && t.status !== TASK_STATUS.CLOSED && t.status !== TASK_STATUS.REJECTED);
@@ -863,6 +874,1019 @@ app.post('/api/tasks/:id/reject', requireManager, (req, res) => {
     detail: `驳回整改任务 ${task.id}：${rejectNote || '无'}`
   });
   res.json({ task });
+});
+
+const DEVICE_STATUS = {
+  NORMAL: 'normal',
+  FAULT: 'fault',
+  MAINTENANCE: 'maintenance',
+  SCRAPPED: 'scrapped'
+};
+const INSPECTION_STATUS = {
+  DRAFT: 'draft',
+  SUBMITTED: 'submitted',
+  CONVERTED: 'converted'
+};
+const REPAIR_STATUS = {
+  REPORTED: 'reported',
+  ACCEPTED: 'accepted',
+  COMPLETED: 'completed',
+  VERIFIED: 'verified',
+  REJECTED: 'rejected'
+};
+
+function parseCSV(text) {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return [];
+  const parseLine = (line) => {
+    const result = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQuotes = false; }
+        else { cur += ch; }
+      } else {
+        if (ch === '"') { inQuotes = true; }
+        else if (ch === ',') { result.push(cur); cur = ''; }
+        else { cur += ch; }
+      }
+    }
+    result.push(cur);
+    return result;
+  };
+  const headers = parseLine(lines[0]).map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const cells = parseLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
+    return obj;
+  });
+}
+
+app.get('/api/devices', requireAuth, (req, res) => {
+  const { storeId, status, keyword } = req.query;
+  let devices = db.getDevices();
+  if (req.session.user.role === 'staff') {
+    devices = devices.filter(d => d.storeId === req.session.user.storeId);
+  }
+  if (storeId) devices = devices.filter(d => d.storeId === storeId);
+  if (status) devices = devices.filter(d => d.status === status);
+  if (keyword) {
+    const kw = keyword.toLowerCase();
+    devices = devices.filter(d =>
+      (d.name && d.name.toLowerCase().includes(kw)) ||
+      (d.code && d.code.toLowerCase().includes(kw)) ||
+      (d.location && d.location.toLowerCase().includes(kw))
+    );
+  }
+  devices.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  res.json({ devices });
+});
+
+app.get('/api/devices/:id', requireAuth, (req, res) => {
+  const device = db.getDevices().find(d => d.id === req.params.id);
+  if (!device) return res.status(404).json({ error: '设备不存在' });
+  if (device.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '无权查看非本门店设备' });
+  }
+  res.json({ device });
+});
+
+app.post('/api/devices', requireManager, (req, res) => {
+  const { code, name, category, model, location, purchaseDate, lastMaintenanceDate, status, note, storeId } = req.body;
+  if (!code || !name) {
+    return res.status(400).json({ error: '设备编号和名称必填' });
+  }
+  const devices = db.getDevices();
+  const targetStoreId = storeId || req.session.user.storeId;
+  if (targetStoreId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可创建设备' });
+  }
+  const existing = devices.find(d => d.storeId === targetStoreId && d.code === code);
+  if (existing) {
+    return res.status(409).json({ error: '该门店已存在相同编号的设备', existing });
+  }
+  const now = new Date().toISOString();
+  const device = {
+    id: db.genId('DV'),
+    storeId: targetStoreId,
+    code,
+    name,
+    category: category || '',
+    model: model || '',
+    location: location || '',
+    purchaseDate: purchaseDate || '',
+    lastMaintenanceDate: lastMaintenanceDate || '',
+    status: status || DEVICE_STATUS.NORMAL,
+    note: note || '',
+    createdAt: now,
+    createdBy: req.session.user.id,
+    createdByName: req.session.user.name,
+    updatedAt: now
+  };
+  devices.push(device);
+  db.saveDevices(devices);
+  db.addHistory({
+    action: 'CREATE_DEVICE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '创建设备 ' + code + ' ' + name,
+    storeId
+  });
+  res.json({ device });
+});
+
+app.put('/api/devices/:id', requireManager, (req, res) => {
+  const devices = db.getDevices();
+  const idx = devices.findIndex(d => d.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '设备不存在' });
+  const device = devices[idx];
+  if (device.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可修改设备' });
+  }
+  const { updatedAt } = req.body;
+  if (updatedAt && device.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '设备已被他人修改，请刷新后重试', currentUpdatedAt: device.updatedAt });
+  }
+  const fields = ['name', 'category', 'model', 'location', 'purchaseDate', 'lastMaintenanceDate', 'status', 'note'];
+  fields.forEach(f => {
+    if (req.body[f] !== undefined) device[f] = req.body[f] || '';
+  });
+  if (req.body.code && req.body.code !== device.code) {
+    const conflict = devices.find(d => d.storeId === device.storeId && d.code === req.body.code && d.id !== device.id);
+    if (conflict) {
+      return res.status(409).json({ error: '该门店已存在相同编号的设备' });
+    }
+    device.code = req.body.code;
+  }
+  device.updatedAt = new Date().toISOString();
+  devices[idx] = device;
+  db.saveDevices(devices);
+  db.addHistory({
+    action: 'UPDATE_DEVICE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '修改设备 ' + device.code + ' ' + device.name,
+    storeId: device.storeId
+  });
+  res.json({ device });
+});
+
+app.delete('/api/devices/:id', requireManager, (req, res) => {
+  const devices = db.getDevices();
+  const idx = devices.findIndex(d => d.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '设备不存在' });
+  const device = devices[idx];
+  if (device.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可删除设备' });
+  }
+  devices.splice(idx, 1);
+  db.saveDevices(devices);
+  db.addHistory({
+    action: 'DELETE_DEVICE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '删除设备 ' + device.code + ' ' + device.name,
+    storeId: device.storeId
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/devices/import/csv', requireManager, (req, res) => {
+  const { csvText } = req.body;
+  if (!csvText) {
+    return res.status(400).json({ error: 'CSV内容为空' });
+  }
+  const rows = parseCSV(csvText);
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'CSV无有效数据' });
+  }
+  const storeId = req.session.user.storeId;
+  const devices = db.getDevices();
+  const existingMap = new Map();
+  devices.filter(d => d.storeId === storeId).forEach(d => existingMap.set(d.code, d));
+
+  const imported = [];
+  const skipped = [];
+  const now = new Date().toISOString();
+
+  for (const row of rows) {
+    const code = (row['设备编号'] || row['code'] || '').trim();
+    const name = (row['设备名称'] || row['name'] || '').trim();
+    if (!code || !name) {
+      skipped.push({ row, reason: '设备编号和名称必填' });
+      continue;
+    }
+    if (existingMap.has(code)) {
+      skipped.push({ row, reason: '编号重复，保留原数据', existing: existingMap.get(code) });
+      continue;
+    }
+    const device = {
+      id: db.genId('DV'),
+      storeId,
+      code,
+      name,
+      category: (row['分类'] || row['category'] || '').trim(),
+      model: (row['型号'] || row['model'] || '').trim(),
+      location: (row['位置'] || row['location'] || '').trim(),
+      purchaseDate: (row['购买日期'] || row['purchaseDate'] || '').trim(),
+      lastMaintenanceDate: (row['上次维护日期'] || row['lastMaintenanceDate'] || '').trim(),
+      status: (row['状态'] || row['status'] || DEVICE_STATUS.NORMAL).trim(),
+      note: (row['备注'] || row['note'] || '').trim(),
+      createdAt: now,
+      createdBy: req.session.user.id,
+      createdByName: req.session.user.name,
+      updatedAt: now
+    };
+    devices.push(device);
+    existingMap.set(code, device);
+    imported.push(device);
+  }
+
+  db.saveDevices(devices);
+  if (imported.length > 0) {
+    db.addHistory({
+      action: 'IMPORT_DEVICE',
+      userId: req.session.user.id,
+      userName: req.session.user.name,
+      detail: 'CSV导入设备 ' + imported.length + ' 条，跳过 ' + skipped.length + ' 条',
+      storeId
+    });
+  }
+  res.json({ imported, skipped, totalImported: imported.length, totalSkipped: skipped.length });
+});
+
+app.get('/api/inspection-templates', requireAuth, (req, res) => {
+  const { storeId } = req.query;
+  let templates = db.getInspectionTemplates();
+  if (req.session.user.role === 'staff') {
+    templates = templates.filter(t => t.storeId === req.session.user.storeId);
+  }
+  if (storeId) templates = templates.filter(t => t.storeId === storeId);
+  templates.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  res.json({ templates });
+});
+
+app.get('/api/inspection-templates/:id', requireAuth, (req, res) => {
+  const tpl = db.getInspectionTemplates().find(t => t.id === req.params.id);
+  if (!tpl) return res.status(404).json({ error: '巡检模板不存在' });
+  if (tpl.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '无权查看非本门店模板' });
+  }
+  res.json({ template: tpl });
+});
+
+app.post('/api/inspection-templates', requireManager, (req, res) => {
+  const { name, description, items, storeId } = req.body;
+  if (!name) return res.status(400).json({ error: '模板名称必填' });
+  if (!items || !Array.isArray(items)) return res.status(400).json({ error: '巡检项必填' });
+  const targetStoreId = storeId || req.session.user.storeId;
+  if (targetStoreId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可创建模板' });
+  }
+  const now = new Date().toISOString();
+  const tpl = {
+    id: db.genId('IT'),
+    storeId: targetStoreId,
+    name,
+    description: description || '',
+    items: items.map((it, i) => ({
+      id: 'ITEM' + (i + 1),
+      name: it.name || '',
+      category: it.category || '',
+      description: it.description || '',
+      required: !!it.required,
+      sort: i + 1
+    })),
+    createdAt: now,
+    createdBy: req.session.user.id,
+    createdByName: req.session.user.name,
+    updatedAt: now
+  };
+  const templates = db.getInspectionTemplates();
+  templates.push(tpl);
+  db.saveInspectionTemplates(templates);
+  db.addHistory({
+    action: 'CREATE_TEMPLATE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '创建巡检模板 ' + name,
+    storeId
+  });
+  res.json({ template: tpl });
+});
+
+app.put('/api/inspection-templates/:id', requireManager, (req, res) => {
+  const templates = db.getInspectionTemplates();
+  const idx = templates.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '巡检模板不存在' });
+  const tpl = templates[idx];
+  if (tpl.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可修改模板' });
+  }
+  const { updatedAt } = req.body;
+  if (updatedAt && tpl.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '模板已被他人修改，请刷新后重试', currentUpdatedAt: tpl.updatedAt });
+  }
+  if (req.body.name !== undefined) tpl.name = req.body.name;
+  if (req.body.description !== undefined) tpl.description = req.body.description;
+  if (req.body.items !== undefined && Array.isArray(req.body.items)) {
+    tpl.items = req.body.items.map((it, i) => ({
+      id: it.id || ('ITEM' + (i + 1)),
+      name: it.name || '',
+      category: it.category || '',
+      description: it.description || '',
+      required: !!it.required,
+      sort: i + 1
+    }));
+  }
+  tpl.updatedAt = new Date().toISOString();
+  templates[idx] = tpl;
+  db.saveInspectionTemplates(templates);
+  db.addHistory({
+    action: 'UPDATE_TEMPLATE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '修改巡检模板 ' + tpl.name,
+    storeId: tpl.storeId
+  });
+  res.json({ template: tpl });
+});
+
+app.delete('/api/inspection-templates/:id', requireManager, (req, res) => {
+  const templates = db.getInspectionTemplates();
+  const idx = templates.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '巡检模板不存在' });
+  const tpl = templates[idx];
+  if (tpl.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可删除模板' });
+  }
+  templates.splice(idx, 1);
+  db.saveInspectionTemplates(templates);
+  db.addHistory({
+    action: 'DELETE_TEMPLATE',
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '删除巡检模板 ' + tpl.name,
+    storeId: tpl.storeId
+  });
+  res.json({ ok: true });
+});
+
+app.get('/api/inspections', requireAuth, (req, res) => {
+  const { storeId, shiftId, status, inspectorId, date } = req.query;
+  let inspections = db.getInspections();
+  if (req.session.user.role === 'staff') {
+    inspections = inspections.filter(i => i.storeId === req.session.user.storeId);
+  }
+  if (storeId) inspections = inspections.filter(i => i.storeId === storeId);
+  if (shiftId) inspections = inspections.filter(i => i.shiftId === shiftId);
+  if (status) inspections = inspections.filter(i => i.status === status);
+  if (inspectorId) inspections = inspections.filter(i => i.inspectorId === inspectorId);
+  if (date) {
+    inspections = inspections.filter(i => i.inspectionDate === date);
+  }
+  inspections.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  res.json({ inspections });
+});
+
+app.get('/api/inspections/:id', requireAuth, (req, res) => {
+  const ins = db.getInspections().find(i => i.id === req.params.id);
+  if (!ins) return res.status(404).json({ error: '巡检单不存在' });
+  if (ins.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '无权查看非本门店巡检单' });
+  }
+  res.json({ inspection: ins });
+});
+
+app.post('/api/inspections', requireAuth, (req, res) => {
+  const { shiftId, templateId, inspectionDate, deviceIds } = req.body;
+  if (!shiftId || !templateId) {
+    return res.status(400).json({ error: '班次和巡检模板必填' });
+  }
+  const shift = db.getShifts().find(s => s.id === shiftId);
+  if (!shift) return res.status(404).json({ error: '班次不存在' });
+  if (shift.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅可为本门店班次创建巡检单' });
+  }
+  const tpl = db.getInspectionTemplates().find(t => t.id === templateId);
+  if (!tpl) return res.status(404).json({ error: '巡检模板不存在' });
+  let devices = db.getDevices().filter(d => d.storeId === shift.storeId && d.status !== DEVICE_STATUS.SCRAPPED);
+  if (Array.isArray(deviceIds) && deviceIds.length > 0) {
+    devices = devices.filter(d => deviceIds.includes(d.id));
+  }
+  if (devices.length === 0) {
+    return res.status(400).json({ error: '没有可巡检的设备' });
+  }
+  const now = new Date().toISOString();
+  const items = [];
+  devices.forEach(d => {
+    tpl.items.forEach(tp => {
+      items.push({
+        id: d.id + '_' + tp.id,
+        deviceId: d.id,
+        deviceCode: d.code,
+        deviceName: d.name,
+        deviceLocation: d.location,
+        templateItemId: tp.id,
+        templateItemName: tp.name,
+        templateItemCategory: tp.category,
+        templateItemDescription: tp.description,
+        required: tp.required,
+        result: null,
+        attachmentNote: '',
+        tempHandling: ''
+      });
+    });
+  });
+  const ins = {
+    id: db.genId('IN'),
+    storeId: shift.storeId,
+    shiftId,
+    shiftType: shift.shiftType,
+    shiftDate: shift.shiftDate,
+    templateId,
+    templateName: tpl.name,
+    inspectionDate: inspectionDate || new Date().toISOString().slice(0, 10),
+    inspectorId: req.session.user.id,
+    inspectorName: req.session.user.name,
+    status: INSPECTION_STATUS.DRAFT,
+    items,
+    createdAt: now,
+    createdBy: req.session.user.id,
+    createdByName: req.session.user.name,
+    updatedAt: now,
+    submittedAt: null
+  };
+  const inspections = db.getInspections();
+  inspections.push(ins);
+  db.saveInspections(inspections);
+  db.addHistory({
+    action: 'CREATE_INSPECTION',
+    shiftId,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '创建巡检单 ' + ins.id + '，模板 ' + tpl.name + '，设备 ' + devices.length + ' 台',
+    storeId: shift.storeId
+  });
+  res.json({ inspection: ins });
+});
+
+app.put('/api/inspections/:id', requireAuth, (req, res) => {
+  const inspections = db.getInspections();
+  const idx = inspections.findIndex(i => i.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '巡检单不存在' });
+  const ins = inspections[idx];
+  if (ins.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店人员可修改巡检单' });
+  }
+  if (req.session.user.role === 'staff' && ins.inspectorId !== req.session.user.id) {
+    return res.status(403).json({ error: '仅巡检人或店长可修改巡检单' });
+  }
+  if (ins.status === INSPECTION_STATUS.CONVERTED) {
+    return res.status(400).json({ error: '巡检单已转维修，不可修改' });
+  }
+  const { updatedAt, items, status } = req.body;
+  if (updatedAt && ins.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '巡检单已被他人修改，请刷新后重试', currentUpdatedAt: ins.updatedAt });
+  }
+  if (Array.isArray(items)) {
+    const itemMap = new Map(ins.items.map(it => [it.id, it]));
+    items.forEach(uit => {
+      itemMap.set(uit.id, { ...itemMap.get(uit.id), ...uit });
+    });
+    ins.items = Array.from(itemMap.values());
+  }
+  if (status === INSPECTION_STATUS.SUBMITTED) {
+    if (ins.status !== INSPECTION_STATUS.DRAFT) {
+      return res.status(400).json({ error: '仅草稿状态可提交' });
+    }
+    ins.status = INSPECTION_STATUS.SUBMITTED;
+    ins.submittedAt = new Date().toISOString();
+    db.addHistory({
+      action: 'SUBMIT_INSPECTION',
+      shiftId: ins.shiftId,
+      userId: req.session.user.id,
+      userName: req.session.user.name,
+      detail: '提交巡检单 ' + ins.id,
+      storeId: ins.storeId
+    });
+  }
+  ins.updatedAt = new Date().toISOString();
+  inspections[idx] = ins;
+  db.saveInspections(inspections);
+  res.json({ inspection: ins });
+});
+
+app.post('/api/inspections/:id/convert-to-repair', requireAuth, (req, res) => {
+  const inspections = db.getInspections();
+  const idx = inspections.findIndex(i => i.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '巡检单不存在' });
+  const ins = inspections[idx];
+  if (ins.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店人员可转维修' });
+  }
+  if (ins.status !== INSPECTION_STATUS.SUBMITTED) {
+    return res.status(400).json({ error: '仅已提交巡检单可转维修' });
+  }
+  const { itemIds } = req.body;
+  const faultItems = ins.items.filter(it => {
+    if (Array.isArray(itemIds) && itemIds.length > 0) {
+      return itemIds.includes(it.id) && it.result === 'abnormal';
+    }
+    return it.result === 'abnormal';
+  });
+  if (faultItems.length === 0) {
+    return res.status(400).json({ error: '没有异常项可转维修' });
+  }
+  const deviceIdsSet = new Set(faultItems.map(it => it.deviceId));
+  const repairOrders = db.getRepairOrders();
+  const now = new Date().toISOString();
+  const createdOrders = [];
+  for (const deviceId of deviceIdsSet) {
+    const device = db.getDevices().find(d => d.id === deviceId);
+    if (!device) continue;
+    const deviceItems = faultItems.filter(it => it.deviceId === deviceId);
+    const abnormalItems = deviceItems.map(it => ({
+      templateItemId: it.templateItemId,
+      templateItemName: it.templateItemName,
+      templateItemCategory: it.templateItemCategory,
+      templateItemDescription: it.templateItemDescription,
+      attachmentNote: it.attachmentNote,
+      tempHandling: it.tempHandling
+    }));
+    const order = {
+      id: db.genId('RO'),
+      storeId: ins.storeId,
+      inspectionId: ins.id,
+      shiftId: ins.shiftId,
+      deviceId,
+      deviceCode: device.code,
+      deviceName: device.name,
+      deviceCategory: device.category,
+      deviceLocation: device.location,
+      title: '维修：' + device.name + '（' + device.code + '）',
+      abnormalItems,
+      description: deviceItems.map(it => it.templateItemName + ': ' + (it.attachmentNote || it.tempHandling || '异常')).join('；'),
+      status: REPAIR_STATUS.REPORTED,
+      statusHistory: [{
+        status: REPAIR_STATUS.REPORTED,
+        by: req.session.user.id,
+        byName: req.session.user.name,
+        at: now,
+        note: '巡检异常转报修'
+      }],
+      assigneeId: null,
+      assigneeName: '',
+      reportAttachmentNote: deviceItems.map(it => it.attachmentNote).filter(Boolean).join('；'),
+      reportTempHandling: deviceItems.map(it => it.tempHandling).filter(Boolean).join('；'),
+      createdAt: now,
+      createdBy: req.session.user.id,
+      createdByName: req.session.user.name,
+      updatedAt: now,
+      acceptedAt: null,
+      acceptedBy: null,
+      acceptedByName: '',
+      completedAt: null,
+      completedBy: null,
+      completedByName: '',
+      completedNote: '',
+      verifiedAt: null,
+      verifiedBy: null,
+      verifiedByName: '',
+      verifiedNote: '',
+      rejectedAt: null,
+      rejectedBy: null,
+      rejectedByName: '',
+      rejectedNote: ''
+    };
+    repairOrders.push(order);
+    createdOrders.push(order);
+    db.addHistory({
+      action: 'CREATE_REPAIR',
+      shiftId: ins.shiftId,
+      inspectionId: ins.id,
+      repairId: order.id,
+      userId: req.session.user.id,
+      userName: req.session.user.name,
+      detail: '转报修单 ' + order.id + '：设备 ' + device.code + ' ' + device.name,
+      storeId: ins.storeId
+    });
+  }
+  const devices = db.getDevices();
+  for (const deviceId of deviceIdsSet) {
+    const dIdx = devices.findIndex(d => d.id === deviceId);
+    if (dIdx !== -1) {
+      devices[dIdx].status = DEVICE_STATUS.FAULT;
+      devices[dIdx].updatedAt = now;
+    }
+  }
+  db.saveDevices(devices);
+  ins.status = INSPECTION_STATUS.CONVERTED;
+  ins.updatedAt = now;
+  inspections[idx] = ins;
+  db.saveInspections(inspections);
+  db.saveRepairOrders(repairOrders);
+  res.json({ repairOrders: createdOrders, inspection: ins });
+});
+
+app.get('/api/repair-orders', requireAuth, (req, res) => {
+  const { storeId, status, assigneeId, mine, deviceId } = req.query;
+  let orders = db.getRepairOrders();
+  if (req.session.user.role === 'staff') {
+    orders = orders.filter(o => o.storeId === req.session.user.storeId);
+  }
+  if (storeId) orders = orders.filter(o => o.storeId === storeId);
+  if (status) orders = orders.filter(o => o.status === status);
+  if (assigneeId) orders = orders.filter(o => o.assigneeId === assigneeId);
+  if (deviceId) orders = orders.filter(o => o.deviceId === deviceId);
+  if (mine === '1') {
+    orders = orders.filter(o =>
+      ((o.assigneeId === req.session.user.id) && (o.status === REPAIR_STATUS.ACCEPTED || o.status === REPAIR_STATUS.REJECTED || o.status === REPAIR_STATUS.COMPLETED)) ||
+      ((req.session.user.role === 'manager') && o.storeId === req.session.user.storeId && (o.status === REPAIR_STATUS.REPORTED || o.status === REPAIR_STATUS.COMPLETED))
+    );
+  }
+  orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  res.json({ repairOrders: orders });
+});
+
+app.get('/api/repair-orders/:id', requireAuth, (req, res) => {
+  const order = db.getRepairOrders().find(o => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: '维修单不存在' });
+  if (order.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '无权查看非本门店维修单' });
+  }
+  res.json({ repairOrder: order });
+});
+
+app.post('/api/repair-orders/:id/assign', requireManager, (req, res) => {
+  const { assigneeId, note, updatedAt } = req.body;
+  const orders = db.getRepairOrders();
+  const idx = orders.findIndex(o => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '维修单不存在' });
+  const order = orders[idx];
+  if (order.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可分派维修单' });
+  }
+  if (updatedAt && order.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '维修单已被他人修改，请刷新后重试', currentUpdatedAt: order.updatedAt });
+  }
+  if (order.status !== REPAIR_STATUS.REPORTED && order.status !== REPAIR_STATUS.REJECTED) {
+    return res.status(400).json({ error: '当前状态 [' + order.status + '] 不可分派' });
+  }
+  const users = db.getUsers();
+  const assignee = users.find(u => u.id === assigneeId);
+  if (!assignee) return res.status(400).json({ error: '接修人不存在' });
+  if (assignee.storeId !== order.storeId) {
+    return res.status(400).json({ error: '接修人必须属于本门店' });
+  }
+  const now = new Date().toISOString();
+  order.assigneeId = assignee.id;
+  order.assigneeName = assignee.name;
+  order.status = REPAIR_STATUS.ACCEPTED;
+  order.acceptedAt = now;
+  order.acceptedBy = req.session.user.id;
+  order.acceptedByName = req.session.user.name;
+  order.updatedAt = now;
+  order.statusHistory.push({
+    status: REPAIR_STATUS.ACCEPTED,
+    by: req.session.user.id,
+    byName: req.session.user.name,
+    at: now,
+    note: note || '分派给 ' + assignee.name,
+  });
+  orders[idx] = order;
+  db.saveRepairOrders(orders);
+  db.addHistory({
+    action: 'ASSIGN_REPAIR',
+    shiftId: order.shiftId,
+    inspectionId: order.inspectionId,
+    repairId: order.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '分派维修单 ' + order.id + ' 给 ' + assignee.name,
+    storeId: order.storeId
+  });
+  res.json({ repairOrder: order });
+});
+
+app.post('/api/repair-orders/:id/complete', requireAuth, (req, res) => {
+  const { completedNote, updatedAt } = req.body;
+  const orders = db.getRepairOrders();
+  const idx = orders.findIndex(o => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '维修单不存在' });
+  const order = orders[idx];
+  if (order.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店人员可完成维修' });
+  }
+  if (order.assigneeId !== req.session.user.id && req.session.user.role !== 'manager') {
+    return res.status(403).json({ error: '仅接修人或店长可完成维修' });
+  }
+  if (updatedAt && order.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '维修单已被他人修改，请刷新后重试', currentUpdatedAt: order.updatedAt });
+  }
+  if (order.status !== REPAIR_STATUS.ACCEPTED && order.status !== REPAIR_STATUS.REJECTED) {
+    return res.status(400).json({ error: '当前状态 [' + order.status + '] 不可完成' });
+  }
+  const now = new Date().toISOString();
+  order.status = REPAIR_STATUS.COMPLETED;
+  order.completedAt = now;
+  order.completedBy = req.session.user.id;
+  order.completedByName = req.session.user.name;
+  order.completedNote = completedNote || '';
+  order.updatedAt = now;
+  order.statusHistory.push({
+    status: REPAIR_STATUS.COMPLETED,
+    by: req.session.user.id,
+    byName: req.session.user.name,
+    at: now,
+    note: completedNote || '完成维修'
+  });
+  orders[idx] = order;
+  db.saveRepairOrders(orders);
+  db.addHistory({
+    action: 'COMPLETE_REPAIR',
+    shiftId: order.shiftId,
+    inspectionId: order.inspectionId,
+    repairId: order.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '完成维修单 ' + order.id,
+    storeId: order.storeId
+  });
+  res.json({ repairOrder: order });
+});
+
+app.post('/api/repair-orders/:id/verify', requireManager, (req, res) => {
+  const { verifiedNote, updatedAt } = req.body;
+  const orders = db.getRepairOrders();
+  const idx = orders.findIndex(o => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '维修单不存在' });
+  const order = orders[idx];
+  if (order.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可验收维修单' });
+  }
+  if (updatedAt && order.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '维修单已被他人修改，请刷新后重试', currentUpdatedAt: order.updatedAt });
+  }
+  if (order.status !== REPAIR_STATUS.COMPLETED) {
+    return res.status(400).json({ error: '当前状态 [' + order.status + '] 不可验收' });
+  }
+  const now = new Date().toISOString();
+  order.status = REPAIR_STATUS.VERIFIED;
+  order.verifiedAt = now;
+  order.verifiedBy = req.session.user.id;
+  order.verifiedByName = req.session.user.name;
+  order.verifiedNote = verifiedNote || '';
+  order.updatedAt = now;
+  order.statusHistory.push({
+    status: REPAIR_STATUS.VERIFIED,
+    by: req.session.user.id,
+    byName: req.session.user.name,
+    at: now,
+    note: verifiedNote || '验收通过'
+  });
+  orders[idx] = order;
+  db.saveRepairOrders(orders);
+  const devices = db.getDevices();
+  const dIdx = devices.findIndex(d => d.id === order.deviceId);
+  if (dIdx !== -1) {
+    devices[dIdx].status = DEVICE_STATUS.NORMAL;
+    devices[dIdx].updatedAt = now;
+    db.saveDevices(devices);
+  }
+  db.addHistory({
+    action: 'VERIFY_REPAIR',
+    shiftId: order.shiftId,
+    inspectionId: order.inspectionId,
+    repairId: order.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '验收维修单 ' + order.id + ' 通过',
+    storeId: order.storeId
+  });
+  res.json({ repairOrder: order });
+});
+
+app.post('/api/repair-orders/:id/reject', requireManager, (req, res) => {
+  const { rejectedNote, updatedAt } = req.body;
+  const orders = db.getRepairOrders();
+  const idx = orders.findIndex(o => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '维修单不存在' });
+  const order = orders[idx];
+  if (order.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可退回维修单' });
+  }
+  if (updatedAt && order.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '维修单已被他人修改，请刷新后重试', currentUpdatedAt: order.updatedAt });
+  }
+  if (order.status !== REPAIR_STATUS.COMPLETED && order.status !== REPAIR_STATUS.REPORTED) {
+    return res.status(400).json({ error: '当前状态 [' + order.status + '] 不可退回' });
+  }
+  const now = new Date().toISOString();
+  order.status = REPAIR_STATUS.REJECTED;
+  order.rejectedAt = now;
+  order.rejectedBy = req.session.user.id;
+  order.rejectedByName = req.session.user.name;
+  order.rejectedNote = rejectedNote || '';
+  order.updatedAt = now;
+  order.statusHistory.push({
+    status: REPAIR_STATUS.REJECTED,
+    by: req.session.user.id,
+    byName: req.session.user.name,
+    at: now,
+    note: rejectedNote || '退回维修'
+  });
+  orders[idx] = order;
+  db.saveRepairOrders(orders);
+  db.addHistory({
+    action: 'REJECT_REPAIR',
+    shiftId: order.shiftId,
+    inspectionId: order.inspectionId,
+    repairId: order.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: '退回维修单 ' + order.id + '：' + (rejectedNote || '无'),
+    storeId: order.storeId
+  });
+  res.json({ repairOrder: order });
+});
+
+app.get('/api/export/devices', requireAuth, (req, res) => {
+  const { storeId, status, format = 'json' } = req.query;
+  let devices = db.getDevices();
+  if (req.session.user.role === 'staff') {
+    devices = devices.filter(d => d.storeId === req.session.user.storeId);
+  }
+  if (storeId) devices = devices.filter(d => d.storeId === storeId);
+  if (status) devices = devices.filter(d => d.status === status);
+  const stores = db.getStores();
+  const storeMap = Object.fromEntries(stores.map(s => [s.id, s.name]));
+  const statusMap = { normal: '正常', fault: '故障', maintenance: '维护中', scrapped: '已报废' };
+  const data = devices.map(d => ({
+    id: d.id,
+    code: d.code,
+    name: d.name,
+    storeName: storeMap[d.storeId] || d.storeId,
+    category: d.category,
+    model: d.model,
+    location: d.location,
+    purchaseDate: d.purchaseDate,
+    lastMaintenanceDate: d.lastMaintenanceDate,
+    status: statusMap[d.status] || d.status,
+    note: d.note,
+    createdByName: d.createdByName,
+    createdAt: d.createdAt,
+    updatedAt: d.updatedAt
+  }));
+  if (format === 'csv') {
+    const headers = [
+      { key: 'id', label: '设备ID' },
+      { key: 'code', label: '设备编号' },
+      { key: 'name', label: '设备名称' },
+      { key: 'storeName', label: '门店' },
+      { key: 'category', label: '分类' },
+      { key: 'model', label: '型号' },
+      { key: 'location', label: '位置' },
+      { key: 'purchaseDate', label: '购买日期' },
+      { key: 'lastMaintenanceDate', label: '上次维护日期' },
+      { key: 'status', label: '状态' },
+      { key: 'note', label: '备注' },
+      { key: 'createdByName', label: '创建人' },
+      { key: 'createdAt', label: '创建时间' },
+      { key: 'updatedAt', label: '更新时间' }
+    ];
+    const csv = '\uFEFF' + jsonToCSV(data, headers);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="devices_' + Date.now() + '.csv"');
+    return res.send(csv);
+  }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="devices_' + Date.now() + '.json"');
+  res.json({ devices: data });
+});
+
+app.get('/api/export/inspections', requireAuth, (req, res) => {
+  const { storeId, status, format = 'json' } = req.query;
+  let inspections = db.getInspections();
+  if (req.session.user.role === 'staff') {
+    inspections = inspections.filter(i => i.storeId === req.session.user.storeId);
+  }
+  if (storeId) inspections = inspections.filter(i => i.storeId === storeId);
+  if (status) inspections = inspections.filter(i => i.status === status);
+  const stores = db.getStores();
+  const storeMap = Object.fromEntries(stores.map(s => [s.id, s.name]));
+  const statusMap = { draft: '草稿', submitted: '已提交', converted: '已转维修' };
+  const data = inspections.map(i => ({
+    id: i.id,
+    storeName: storeMap[i.storeId] || i.storeId,
+    shiftId: i.shiftId,
+    shiftType: i.shiftType,
+    shiftDate: i.shiftDate,
+    templateName: i.templateName,
+    inspectionDate: i.inspectionDate,
+    inspectorName: i.inspectorName,
+    status: statusMap[i.status] || i.status,
+    itemCount: i.items.length,
+    abnormalCount: i.items.filter(it => it.result === 'abnormal').length,
+    createdAt: i.createdAt,
+    submittedAt: i.submittedAt || ''
+  }));
+  if (format === 'csv') {
+    const headers = [
+      { key: 'id', label: '巡检单ID' },
+      { key: 'storeName', label: '门店' },
+      { key: 'shiftId', label: '班次ID' },
+      { key: 'shiftType', label: '班次类型' },
+      { key: 'shiftDate', label: '班次日期' },
+      { key: 'templateName', label: '巡检模板' },
+      { key: 'inspectionDate', label: '巡检日期' },
+      { key: 'inspectorName', label: '巡检人' },
+      { key: 'status', label: '状态' },
+      { key: 'itemCount', label: '巡检项数' },
+      { key: 'abnormalCount', label: '异常项数' },
+      { key: 'createdAt', label: '创建时间' },
+      { key: 'submittedAt', label: '提交时间' }
+    ];
+    const csv = '\uFEFF' + jsonToCSV(data, headers);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="inspections_' + Date.now() + '.csv"');
+    return res.send(csv);
+  }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="inspections_' + Date.now() + '.json"');
+  res.json({ inspections: data });
+});
+
+app.get('/api/export/repair-orders', requireAuth, (req, res) => {
+  const { storeId, status, format = 'json' } = req.query;
+  let orders = db.getRepairOrders();
+  if (req.session.user.role === 'staff') {
+    orders = orders.filter(o => o.storeId === req.session.user.storeId);
+  }
+  if (storeId) orders = orders.filter(o => o.storeId === storeId);
+  if (status) orders = orders.filter(o => o.status === status);
+  const stores = db.getStores();
+  const storeMap = Object.fromEntries(stores.map(s => [s.id, s.name]));
+  const statusMap = { reported: '已报修', accepted: '已接单', completed: '已完成', verified: '已验收', rejected: '已退回' };
+  const data = orders.map(o => ({
+    id: o.id,
+    storeName: storeMap[o.storeId] || o.storeId,
+    deviceCode: o.deviceCode,
+    deviceName: o.deviceName,
+    deviceLocation: o.deviceLocation,
+    title: o.title,
+    description: o.description,
+    status: statusMap[o.status] || o.status,
+    assigneeName: o.assigneeName || '未分派',
+    createdByName: o.createdByName,
+    completedNote: o.completedNote || '',
+    completedByName: o.completedByName || '',
+    verifiedNote: o.verifiedNote || '',
+    verifiedByName: o.verifiedByName || '',
+    rejectedNote: o.rejectedNote || '',
+    rejectedByName: o.rejectedByName || '',
+    createdAt: o.createdAt,
+    acceptedAt: o.acceptedAt || '',
+    completedAt: o.completedAt || '',
+    verifiedAt: o.verifiedAt || '',
+    rejectedAt: o.rejectedAt || ''
+  }));
+  if (format === 'csv') {
+    const headers = [
+      { key: 'id', label: '维修单ID' },
+      { key: 'storeName', label: '门店' },
+      { key: 'deviceCode', label: '设备编号' },
+      { key: 'deviceName', label: '设备名称' },
+      { key: 'deviceLocation', label: '设备位置' },
+      { key: 'title', label: '标题' },
+      { key: 'description', label: '描述' },
+      { key: 'status', label: '状态' },
+      { key: 'assigneeName', label: '接修人' },
+      { key: 'createdByName', label: '报修人' },
+      { key: 'completedNote', label: '完成说明' },
+      { key: 'completedByName', label: '完成人' },
+      { key: 'verifiedNote', label: '验收说明' },
+      { key: 'verifiedByName', label: '验收人' },
+      { key: 'rejectedNote', label: '退回原因' },
+      { key: 'rejectedByName', label: '退回人' },
+      { key: 'createdAt', label: '报修时间' },
+      { key: 'acceptedAt', label: '接单时间' },
+      { key: 'completedAt', label: '完成时间' },
+      { key: 'verifiedAt', label: '验收时间' },
+      { key: 'rejectedAt', label: '退回时间' }
+    ];
+    const csv = '\uFEFF' + jsonToCSV(data, headers);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="repair_orders_' + Date.now() + '.csv"');
+    return res.send(csv);
+  }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="repair_orders_' + Date.now() + '.json"');
+  res.json({ repairOrders: data });
 });
 
 app.get('/api/export/tasks', requireAuth, (req, res) => {

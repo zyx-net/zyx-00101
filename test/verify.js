@@ -327,27 +327,230 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   }
   console.log('  OK tasks JSON content validated (has tasks array)');
   console.log();
+  console.log('[DEV-1] Device management: create, CSV import (with duplicate), list, detail, delete');
+  const d1 = await request('POST', '/api/devices', {
+    code: 'TEST-001', name: '测试设备1', category: '测试', model: 'M-001', location: '位置A', note: '测试备注'
+  }, m1);
+  eq(d1.status, 200, 'create device');
+  const dv1 = d1.data.device;
+  eq(dv1.code, 'TEST-001', 'device code');
+  eq(dv1.storeId, 'S001', 'device storeId = S001');
+  console.log('  OK device created, id=' + dv1.id);
 
-  console.log('[5/8] Operation history');
+  const dup = await request('POST', '/api/devices', { code: 'TEST-001', name: '重复设备' }, m1);
+  err(dup, '已存在相同编号', 'duplicate device code rejected (409)');
+  eq(dup.status, 409, 'duplicate device returns 409');
+
+  const csv = '设备编号,设备名称,分类,型号,位置,购买日期,备注\nTEST-001,覆盖失败,测试,M-X,位置B,2024-01-01,测试\nTEST-002,CSV设备2,IT,HP-X,位置2,2024-02-01,备注2\nTEST-003,CSV设备3,制冷,海尔-Y,位置3,2024-03-01,备注3\nTEST-004,CSV设备4,电器,格力-Z,位置4,2024-04-01,备注4';
+  const imp = await request('POST', '/api/devices/import/csv', { csvText: csv }, m1);
+  eq(imp.status, 200, 'CSV import');
+  eq(imp.data.totalImported, 3, 'CSV imported 3 (skipped 1 duplicate)');
+  eq(imp.data.totalSkipped, 1, 'CSV skipped 1 duplicate');
+  eq(imp.data.skipped[0].reason, '编号重复，保留原数据', 'duplicate skip reason');
+  const dlist = (await request('GET', '/api/devices', null, m1)).data.devices;
+  eq(dlist.length, 4, 'device list count = 4 (1 created + 3 imported)');
+  const preserved = dlist.find(d => d.code === 'TEST-001');
+  eq(preserved.name, '测试设备1', 'duplicate code preserves original data (not overwritten)');
+  console.log('  OK CSV import duplicate preserves original data');
+
+  const ddv = (await request('GET', '/api/devices/' + dv1.id, null, m1)).data.device;
+  eq(ddv.code, 'TEST-001', 'device detail code');
+  eq(ddv.createdByName, '张店长', 'device detail createdByName');
+  console.log('  OK device detail');
+
+  const del = await request('POST', '/api/devices/' + dv1.id + '?_method=DELETE', {}, m1);
+  eq(del.status, 200, 'delete device');
+  const dlist2 = (await request('GET', '/api/devices', null, m1)).data.devices;
+  eq(dlist2.length, 3, 'device count after delete = 3');
+  console.log('  OK device delete');
+
+  console.log();
+  console.log('[DEV-2] Inspection template, inspection flow, and repair order full lifecycle');
+  const tpl = await request('POST', '/api/inspection-templates', {
+    name: '测试巡检模板', description: '测试用',
+    items: [
+      { name: '外观检查', category: '常规', description: '外观完好', required: true },
+      { name: '功能测试', category: '功能', description: '功能正常', required: true }
+    ]
+  }, m1);
+  eq(tpl.status, 200, 'create inspection template');
+  const tplId = tpl.data.template.id;
+  const tplList = (await request('GET', '/api/inspection-templates', null, m1)).data.templates;
+  eq(tplList.length, 1, 'template list count = 1');
+  eq(tplList[0].items.length, 2, 'template has 2 items');
+  console.log('  OK template created');
+
+  const dvcForIns = dlist2[0];
+  const insCreate = await request('POST', '/api/inspections', {
+    shiftId: sid, templateId: tplId, inspectionDate: today, deviceIds: [dvcForIns.id]
+  }, s1);
+  eq(insCreate.status, 200, 'create inspection');
+  const insId = insCreate.data.inspection.id;
+  const ins = (await request('GET', '/api/inspections/' + insId, null, s1)).data.inspection;
+  eq(ins.items.length, 2, 'inspection has 2 items (1 device x 2 template items)');
+  eq(ins.status, 'draft', 'inspection initial status = draft');
+  console.log('  OK inspection created with items');
+
+  const insItems = ins.items.map(it => ({
+    id: it.id, result: it.id.includes('ITEM1') ? 'normal' : 'abnormal',
+    attachmentNote: it.id.includes('ITEM1') ? '' : '测试异常',
+    tempHandling: it.id.includes('ITEM1') ? '' : '临时处理中'
+  }));
+  const insSubmit = await request('PUT', '/api/inspections/' + insId, {
+    items: insItems, status: 'submitted', updatedAt: ins.updatedAt
+  }, s1);
+  eq(insSubmit.status, 200, 'submit inspection');
+  const insSub = (await request('GET', '/api/inspections/' + insId, null, s1)).data.inspection;
+  eq(insSub.status, 'submitted', 'inspection after submit = submitted');
+  eq(insSub.items.filter(i => i.result === 'abnormal').length, 1, '1 abnormal item');
+  console.log('  OK inspection submitted with abnormal item');
+
+  const convert = await request('POST', '/api/inspections/' + insId + '/convert-to-repair', {
+    itemIds: insSub.items.filter(i => i.result === 'abnormal').map(i => i.id)
+  }, s1);
+  eq(convert.status, 200, 'convert to repair');
+  eq(convert.data.repairOrders.length, 1, '1 repair order created');
+  eq(convert.data.inspection.status, 'converted', 'inspection status after convert = converted');
+  const roId = convert.data.repairOrders[0].id;
+  const ro = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro.status, 'reported', 'repair initial status = reported');
+  eq(ro.deviceId, dvcForIns.id, 'repair device matches');
+  eq(ro.statusHistory.length, 1, 'repair statusHistory has 1 entry (reported)');
+  eq(ro.statusHistory[0].status, 'reported', 'first history entry = reported');
+  console.log('  OK converted to repair order');
+
+  const assign = await request('POST', '/api/repair-orders/' + roId + '/assign', {
+    assigneeId: 'U004', note: '请尽快维修', updatedAt: ro.updatedAt
+  }, m1);
+  eq(assign.status, 200, 'assign repair');
+  const ro2 = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro2.status, 'accepted', 'repair after assign = accepted');
+  eq(ro2.assigneeId, 'U004', 'assignee = staff2');
+  eq(ro2.statusHistory.length, 2, 'statusHistory has 2 entries');
+  eq(ro2.statusHistory[1].status, 'accepted', 'second entry = accepted');
+  console.log('  OK repair assigned');
+
+  const complete = await request('POST', '/api/repair-orders/' + roId + '/complete', {
+    completedNote: '已修复，测试正常', updatedAt: ro2.updatedAt
+  }, s2);
+  eq(complete.status, 200, 'complete repair');
+  const ro3 = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro3.status, 'completed', 'repair after complete = completed');
+  eq(ro3.statusHistory.length, 3, 'statusHistory has 3 entries');
+  console.log('  OK repair completed');
+
+  const reject = await request('POST', '/api/repair-orders/' + roId + '/reject', {
+    rejectedNote: '修复不彻底，重新检查', updatedAt: ro3.updatedAt
+  }, m1);
+  eq(reject.status, 200, 'reject repair');
+  const ro4 = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro4.status, 'rejected', 'repair after reject = rejected');
+  eq(ro4.rejectedNote, '修复不彻底，重新检查', 'rejected note');
+  eq(ro4.statusHistory.length, 4, 'statusHistory has 4 entries');
+  console.log('  OK repair rejected');
+
+  const complete2 = await request('POST', '/api/repair-orders/' + roId + '/complete', {
+    completedNote: '已彻底修复，测试通过', updatedAt: ro4.updatedAt
+  }, s2);
+  eq(complete2.status, 200, 'complete repair again');
+  const ro5 = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro5.status, 'completed', 'repair after second complete = completed');
+  const verify = await request('POST', '/api/repair-orders/' + roId + '/verify', {
+    verifiedNote: '验收合格', updatedAt: ro5.updatedAt
+  }, m1);
+  eq(verify.status, 200, 'verify repair');
+  const ro6 = (await request('GET', '/api/repair-orders/' + roId, null, m1)).data.repairOrder;
+  eq(ro6.status, 'verified', 'repair final status = verified');
+  eq(ro6.statusHistory.length, 6, 'statusHistory has 6 entries (full lifecycle)');
+  console.log('  OK repair verified, full lifecycle complete');
+
+  console.log();
+  console.log('[DEV-3] Permission and conflict tests');
+  err(await request('GET', '/api/devices/' + dvcForIns.id, null, m2), '非本门店', 'cross-store manager cannot see device detail (403)');
+  err(await request('POST', '/api/devices', { code: 'X-001', name: '越权设备', storeId: 'S001' }, m2), '仅本门店', 'cross-store manager cannot create device (403)');
+  err(await request('POST', '/api/repair-orders/' + roId + '/assign', { assigneeId: 'U006', note: '越权分派' }, m2), '仅本门店', 'cross-store manager cannot assign repair (403)');
+  err(await request('POST', '/api/repair-orders/' + roId + '/complete', { completedNote: '越权完成' }, s3), '仅接修人', 'non-assignee staff cannot complete repair (403)');
+
+  const conflictIns = await request('POST', '/api/inspections', { shiftId: sid, templateId: tplId, inspectionDate: today, deviceIds: [dvcForIns.id] }, s1);
+  const conflictInsId = conflictIns.data.inspection.id;
+  const conflictInsData = conflictIns.data.inspection;
+  const conflictInsItems = conflictInsData.items.map(it => ({ id: it.id, result: 'abnormal', attachmentNote: '冲突测试异常', tempHandling: '临时处理' }));
+  await request('PUT', '/api/inspections/' + conflictInsId, { items: conflictInsItems, status: 'submitted', updatedAt: conflictInsData.updatedAt }, s1);
+  const convertConflict = await request('POST', '/api/inspections/' + conflictInsId + '/convert-to-repair', {}, s1);
+  const conflictRoId = convertConflict.data.repairOrders[0].id;
+
+  const roConflictA = await request('GET', '/api/repair-orders/' + conflictRoId, null, m1);
+  const roConflictB = await request('GET', '/api/repair-orders/' + conflictRoId, null, m1);
+  const roOldUpdatedAt = roConflictA.data.repairOrder.updatedAt;
+  await new Promise(r => setTimeout(r, 10));
+  await request('POST', '/api/repair-orders/' + conflictRoId + '/assign', { assigneeId: 'U004', note: 'A先分派', updatedAt: roConflictA.data.repairOrder.updatedAt }, m1);
+  const conflict = await request('POST', '/api/repair-orders/' + conflictRoId + '/assign', { assigneeId: 'U003', updatedAt: roOldUpdatedAt }, m1);
+  err(conflict, '已被他人修改', 'stale update returns 409');
+  eq(conflict.status, 409, 'conflict returns 409');
+  const roConflictFinal = (await request('GET', '/api/repair-orders/' + conflictRoId, null, m1)).data.repairOrder;
+  eq(roConflictFinal.status, 'accepted', 'status unchanged after 409 conflict (assigned to U004, not U003)');
+  eq(roConflictFinal.assigneeId, 'U004', 'assignee unchanged after 409 conflict (not reverted to null)');
+  console.log('  OK 409 conflict, status preserved');
+
+  console.log();
+  console.log('[DEV-4] CSV/JSON export for devices, inspections, repair-orders');
+  const devCsv = await request('GET', '/api/export/devices?storeId=S001&format=csv', null, m1);
+  eq(typeof devCsv.data, 'string', 'devices CSV is string');
+  eq(devCsv.data.includes('设备编号'), true, 'devices CSV has 设备编号 header');
+  eq(devCsv.data.includes('TEST-002'), true, 'devices CSV contains TEST-002');
+  const devJson = await request('GET', '/api/export/devices?storeId=S001&format=json', null, m1);
+  eq(typeof devJson.data, 'object', 'devices JSON is object');
+  eq(Array.isArray(devJson.data.devices), true, 'devices JSON has devices array');
+  console.log('  OK devices CSV/JSON export');
+
+  const insCsv = await request('GET', '/api/export/inspections?storeId=S001&format=csv', null, m1);
+  eq(typeof insCsv.data, 'string', 'inspections CSV is string');
+  eq(insCsv.data.includes('巡检单ID'), true, 'inspections CSV has 巡检单ID header');
+  const insJson = await request('GET', '/api/export/inspections?storeId=S001&format=json', null, m1);
+  eq(Array.isArray(insJson.data.inspections), true, 'inspections JSON has inspections array');
+  console.log('  OK inspections CSV/JSON export');
+
+  const roCsv = await request('GET', '/api/export/repair-orders?storeId=S001&format=csv', null, m1);
+  eq(typeof roCsv.data, 'string', 'repair-orders CSV is string');
+  eq(roCsv.data.includes('维修单ID'), true, 'repair-orders CSV has 维修单ID header');
+  const roJson = await request('GET', '/api/export/repair-orders?storeId=S001&format=json', null, m1);
+  eq(Array.isArray(roJson.data.repairOrders), true, 'repair-orders JSON has repairOrders array');
+  console.log('  OK repair-orders CSV/JSON export');
+
+  console.log();
+  console.log('[5/8] Operation history (extended with device/inspection/repair actions)');
   const hist = (await request('GET', '/api/history', null, m1)).data.history;
   const acts = hist.map(h => h.action);
   ['CREATE_SHIFT','HANDOVER_SHIFT','CONFIRM_SHIFT','CREATE_EXCEPTION','SUBMIT_REVIEW','HANDLE_EXCEPTION','CLOSE_EXCEPTION','CLOSE_SHIFT',
-   'CREATE_TASK','ASSIGN_TASK','SUBMIT_TASK','ACCEPT_TASK','REJECT_TASK']
-    .forEach(a => { if (!acts.includes(a)) throw new Error(`missing history action: ${a}`); });
-  console.log(`  OK all 13 action types present (total=${hist.length})`);
+   'CREATE_TASK','ASSIGN_TASK','SUBMIT_TASK','ACCEPT_TASK','REJECT_TASK',
+   'CREATE_DEVICE','IMPORT_DEVICE','CREATE_TEMPLATE','CREATE_INSPECTION','SUBMIT_INSPECTION','CREATE_REPAIR','ASSIGN_REPAIR','COMPLETE_REPAIR','VERIFY_REPAIR','REJECT_REPAIR']
+    .forEach(a => { if (!acts.includes(a)) throw new Error('missing history action: ' + a); });
+  console.log('  OK all 23 action types present (total=' + hist.length + ')');
   console.log();
 
   console.log('=== Phase 2: Snapshot, REAL restart (kill old PID, spawn new process), verify persistence ===');
   const before = {
-    shift: (await request('GET', `/api/shifts/${sid}`, null, m1)).data,
+    shift: (await request('GET', '/api/shifts/' + sid, null, m1)).data,
     shiftsCsv: (await request('GET', '/api/export/shifts?storeId=S001&format=csv', null, m1)).data,
     shiftsJson: (await request('GET', '/api/export/shifts?storeId=S001&format=json', null, m1)).data,
     excCsv: (await request('GET', '/api/export/exceptions?storeId=S001&format=csv', null, m1)).data,
     excJson: (await request('GET', '/api/export/exceptions?storeId=S001&format=json', null, m1)).data,
-    task: (await request('GET', `/api/tasks/${tid}`, null, m1)).data,
+    task: (await request('GET', '/api/tasks/' + tid, null, m1)).data,
     taskList: (await request('GET', '/api/tasks?storeId=S001', null, m1)).data,
     taskCsv: (await request('GET', '/api/export/tasks?storeId=S001&format=csv', null, m1)).data,
-    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1)).data
+    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1)).data,
+    deviceList: (await request('GET', '/api/devices?storeId=S001', null, m1)).data,
+    device: (await request('GET', '/api/devices/' + dvcForIns.id, null, m1)).data,
+    devicesCsv: devCsv.data,
+    devicesJson: devJson.data,
+    inspectionList: (await request('GET', '/api/inspections?storeId=S001', null, m1)).data,
+    inspection: (await request('GET', '/api/inspections/' + insId, null, m1)).data,
+    inspectionsCsv: insCsv.data,
+    inspectionsJson: insJson.data,
+    repairOrderList: (await request('GET', '/api/repair-orders?storeId=S001', null, m1)).data,
+    repairOrder: (await request('GET', '/api/repair-orders/' + roId, null, m1)).data,
+    repairOrdersCsv: roCsv.data,
+    repairOrdersJson: roJson.data
   };
   if (typeof before.shiftsCsv !== 'string' || !before.shiftsCsv.includes('班次ID')) {
     throw new Error('FAIL before.shiftsCsv is not valid CSV (missing 班次ID header)');
@@ -391,15 +594,27 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
 
   console.log('[6/8] Persistence after real restart');
   const after = {
-    shift: (await request('GET', `/api/shifts/${sid}`, null, m1r)).data,
+    shift: (await request('GET', '/api/shifts/' + sid, null, m1r)).data,
     shiftsCsv: (await request('GET', '/api/export/shifts?storeId=S001&format=csv', null, m1r)).data,
     shiftsJson: (await request('GET', '/api/export/shifts?storeId=S001&format=json', null, m1r)).data,
     excCsv: (await request('GET', '/api/export/exceptions?storeId=S001&format=csv', null, m1r)).data,
     excJson: (await request('GET', '/api/export/exceptions?storeId=S001&format=json', null, m1r)).data,
-    task: (await request('GET', `/api/tasks/${tid}`, null, m1r)).data,
+    task: (await request('GET', '/api/tasks/' + tid, null, m1r)).data,
     taskList: (await request('GET', '/api/tasks?storeId=S001', null, m1r)).data,
     taskCsv: (await request('GET', '/api/export/tasks?storeId=S001&format=csv', null, m1r)).data,
-    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1r)).data
+    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1r)).data,
+    deviceList: (await request('GET', '/api/devices?storeId=S001', null, m1r)).data,
+    device: (await request('GET', '/api/devices/' + dvcForIns.id, null, m1r)).data,
+    devicesCsv: (await request('GET', '/api/export/devices?storeId=S001&format=csv', null, m1r)).data,
+    devicesJson: (await request('GET', '/api/export/devices?storeId=S001&format=json', null, m1r)).data,
+    inspectionList: (await request('GET', '/api/inspections?storeId=S001', null, m1r)).data,
+    inspection: (await request('GET', '/api/inspections/' + insId, null, m1r)).data,
+    inspectionsCsv: (await request('GET', '/api/export/inspections?storeId=S001&format=csv', null, m1r)).data,
+    inspectionsJson: (await request('GET', '/api/export/inspections?storeId=S001&format=json', null, m1r)).data,
+    repairOrderList: (await request('GET', '/api/repair-orders?storeId=S001', null, m1r)).data,
+    repairOrder: (await request('GET', '/api/repair-orders/' + roId, null, m1r)).data,
+    repairOrdersCsv: (await request('GET', '/api/export/repair-orders?storeId=S001&format=csv', null, m1r)).data,
+    repairOrdersJson: (await request('GET', '/api/export/repair-orders?storeId=S001&format=json', null, m1r)).data
   };
 
   eq(after.shift.shift.status, before.shift.shift.status, 'shift status preserved');
@@ -424,6 +639,31 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   eq(after.taskList.tasks.length, before.taskList.tasks.length, 'task list count preserved');
   eq(after.taskCsv, before.taskCsv, 'tasks CSV identical');
   eq(JSON.stringify(after.taskJson), JSON.stringify(before.taskJson), 'tasks JSON identical');
+
+  eq(after.deviceList.devices.length, before.deviceList.devices.length, 'device list count preserved');
+  eq(after.device.device.code, before.device.device.code, 'device code preserved');
+  eq(after.device.device.name, before.device.device.name, 'device name preserved');
+  eq(after.device.device.status, before.device.device.status, 'device status preserved');
+  eq(after.devicesCsv, before.devicesCsv, 'devices CSV identical');
+  eq(JSON.stringify(after.devicesJson), JSON.stringify(before.devicesJson), 'devices JSON identical');
+  console.log('  OK device persistence verified');
+
+  eq(after.inspectionList.inspections.length, before.inspectionList.inspections.length, 'inspection list count preserved');
+  eq(after.inspection.inspection.status, before.inspection.inspection.status, 'inspection status preserved');
+  eq(after.inspection.inspection.inspectorName, before.inspection.inspection.inspectorName, 'inspection inspectorName preserved');
+  eq(after.inspection.inspection.items.length, before.inspection.inspection.items.length, 'inspection items count preserved');
+  eq(after.inspectionsCsv, before.inspectionsCsv, 'inspections CSV identical');
+  eq(JSON.stringify(after.inspectionsJson), JSON.stringify(before.inspectionsJson), 'inspections JSON identical');
+  console.log('  OK inspection persistence verified');
+
+  eq(after.repairOrderList.repairOrders.length, before.repairOrderList.repairOrders.length, 'repairOrder list count preserved');
+  eq(after.repairOrder.repairOrder.status, before.repairOrder.repairOrder.status, 'repairOrder status preserved');
+  eq(after.repairOrder.repairOrder.assigneeName, before.repairOrder.repairOrder.assigneeName, 'repairOrder assigneeName preserved');
+  eq(after.repairOrder.repairOrder.statusHistory.length, before.repairOrder.repairOrder.statusHistory.length, 'repairOrder statusHistory length preserved');
+  eq(after.repairOrder.repairOrder.statusHistory[after.repairOrder.repairOrder.statusHistory.length - 1].status, 'verified', 'repairOrder last status = verified');
+  eq(after.repairOrdersCsv, before.repairOrdersCsv, 'repairOrders CSV identical');
+  eq(JSON.stringify(after.repairOrdersJson), JSON.stringify(before.repairOrdersJson), 'repairOrders JSON identical');
+  console.log('  OK repairOrder persistence verified');
 
   console.log();
   console.log('=== Cleanup: stop server, delete temp data dir ===');

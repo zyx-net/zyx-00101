@@ -8,7 +8,7 @@ const CONFIG_DIR = path.join(__dirname, '..', 'config');
 
 function ensureDataFiles() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  ['shifts.json', 'exceptions.json', 'history.json', 'tasks.json'].forEach(f => {
+  ['shifts.json', 'exceptions.json', 'history.json', 'tasks.json', 'devices.json', 'inspection-templates.json', 'inspections.json', 'repair-orders.json'].forEach(f => {
     const fp = path.join(DATA_DIR, f);
     if (!fs.existsSync(fp)) fs.writeFileSync(fp, '[]\n', 'utf-8');
   });
@@ -86,6 +86,31 @@ function saveTasks(tasks) {
   writeJSON(path.join(DATA_DIR, 'tasks.json'), tasks);
 }
 
+function getDevices() {
+  return readJSON(path.join(DATA_DIR, 'devices.json'));
+}
+function saveDevices(devices) {
+  writeJSON(path.join(DATA_DIR, 'devices.json'), devices);
+}
+function getInspectionTemplates() {
+  return readJSON(path.join(DATA_DIR, 'inspection-templates.json'));
+}
+function saveInspectionTemplates(templates) {
+  writeJSON(path.join(DATA_DIR, 'inspection-templates.json'), templates);
+}
+function getInspections() {
+  return readJSON(path.join(DATA_DIR, 'inspections.json'));
+}
+function saveInspections(inspections) {
+  writeJSON(path.join(DATA_DIR, 'inspections.json'), inspections);
+}
+function getRepairOrders() {
+  return readJSON(path.join(DATA_DIR, 'repair-orders.json'));
+}
+function saveRepairOrders(orders) {
+  writeJSON(path.join(DATA_DIR, 'repair-orders.json'), orders);
+}
+
 module.exports = {
   getStores,
   getChecklist,
@@ -100,5 +125,13 @@ module.exports = {
   addHistory,
   genId,
   getTasks,
-  saveTasks
+  saveTasks,
+  getDevices,
+  saveDevices,
+  getInspectionTemplates,
+  saveInspectionTemplates,
+  getInspections,
+  saveInspections,
+  getRepairOrders,
+  saveRepairOrders
 };

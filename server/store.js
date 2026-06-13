@@ -1,8 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
+
+function ensureDataFiles() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  ['shifts.json', 'exceptions.json', 'history.json'].forEach(f => {
+    const fp = path.join(DATA_DIR, f);
+    if (!fs.existsSync(fp)) fs.writeFileSync(fp, '[]\n', 'utf-8');
+  });
+}
+ensureDataFiles();
 
 function readJSON(filePath) {
   const raw = fs.readFileSync(filePath, 'utf-8');

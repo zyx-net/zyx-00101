@@ -112,12 +112,12 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   console.log('Isolated from project data/: ' + (TEST_DATA_DIR !== path.join(PROJECT_DIR, 'data')));
   console.log();
 
-  console.log('=== Phase 1: Start fresh server, run main flow + error boundaries ===');
+  console.log('=== Phase 1: Start fresh server, run main flow + error boundaries + rectification tasks ===');
   await startServer();
   serverPidFirstRun = serverPid;
   console.log(`  Server PID=${serverPid}, data dir=${TEST_DATA_DIR}\n`);
 
-  console.log('[1/6] All sample accounts login');
+  console.log('[1/8] All sample accounts login');
   const m1 = await login('manager1', 'manager123');
   const m2 = await login('manager2', 'manager123');
   const s1 = await login('staff1', 'staff123');
@@ -129,7 +129,7 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   const cl = await request('GET', '/api/config/checklist', null, s1);
   const items = cl.data.checklist.map(c => ({ id: c.id, checked: true }));
 
-  console.log('[2/6] Main flow: create -> handover -> confirm -> exceptions -> review -> handle/close exc -> close shift');
+  console.log('[2/8] Main flow: create -> handover -> confirm -> exceptions -> review -> handle/close exc -> close shift');
   const cr = await request('POST', '/api/shifts', {
     storeId: 'S001', shiftType: 'morning', shiftDate: today,
     handoverStaffId: 'U003', receiveStaffId: 'U004', checklistItems: items, note: 'main test'
@@ -165,7 +165,7 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   eq((await request('GET', `/api/shifts/${sid}`, null, m1)).data.shift.status, 'closed', 'shift final status = closed');
   console.log();
 
-  console.log('[3/6] Error boundaries (status NOT corrupted on failure)');
+  console.log('[3/8] Error boundaries (status NOT corrupted on failure)');
   const c2 = await request('POST', '/api/shifts', {
     storeId: 'S001', shiftType: 'evening', shiftDate: today,
     handoverStaffId: 'U003', receiveStaffId: 'U005', checklistItems: items, note: 'perm test'
@@ -204,7 +204,87 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   }, s1), '不能为同一人', 'handover==receive rejected (400)');
   console.log();
 
-  console.log('[4/6] CSV / JSON export');
+  console.log('[TASK-1] Rectification task main flow: create -> assign -> submit -> accept/close');
+  const taskShift = await request('POST', '/api/shifts', {
+    storeId: 'S001', shiftType: 'afternoon', shiftDate: today,
+    handoverStaffId: 'U003', receiveStaffId: 'U004', checklistItems: items, note: 'task flow test'
+  }, s1);
+  const tsid = taskShift.data.shift.id;
+  await request('POST', `/api/shifts/${tsid}/handover`, {}, s1);
+  await request('POST', `/api/shifts/${tsid}/confirm`, {}, s2);
+  const taskEx = await request('POST', '/api/exceptions', { shiftId: tsid, type: 'cash', amount: 200, responsibleStaffId: 'U003', description: 'large cash shortage for rectification' }, s2);
+  const teid = taskEx.data.exception.id;
+
+  const crTask = await request('POST', '/api/tasks', {
+    exceptionId: teid, assigneeId: 'U003', deadline: today,
+    steps: '1. recount\n2. check video\n3. report to manager', attachmentNote: 'photo no. 123'
+  }, s2);
+  eq(crTask.status, 200, 'create rectification task');
+  const tid = crTask.data.task.id;
+  eq(crTask.data.task.status, 'pending', 'task status after create = pending');
+  eq(crTask.data.task.assigneeId, 'U003', 'task assignee = U003');
+  eq(crTask.data.task.statusHistory.length, 1, 'task statusHistory has 1 entry');
+
+  const asTask = await request('POST', `/api/tasks/${tid}/assign`, { assigneeId: 'U004', note: 'reassigned' }, m1);
+  eq(asTask.data.task.status, 'assigned', 'after assign = assigned');
+  eq(asTask.data.task.assigneeName, '赵中班', 'after assign assigneeName = 赵中班');
+  eq(asTask.data.task.statusHistory.length, 2, 'statusHistory after assign = 2');
+
+  const subTask = await request('POST', `/api/tasks/${tid}/submit`, { submitNote: 'recounted and found missing 200 from drawer, filled by me' }, s2);
+  eq(subTask.data.task.status, 'submitted', 'after submit = submitted');
+  eq(subTask.data.task.submittedByName, '赵中班', 'submittedByName = 赵中班');
+  eq(subTask.data.task.statusHistory.length, 3, 'statusHistory after submit = 3');
+
+  const accTask = await request('POST', `/api/tasks/${tid}/accept`, { closeNote: 'accepted' }, m1);
+  eq(accTask.data.task.status, 'closed', 'after accept = closed');
+  eq(accTask.data.task.closedByName, '张店长', 'closedByName = 张店长');
+  eq(accTask.data.task.statusHistory.length, 4, 'statusHistory after accept = 4');
+  console.log();
+
+  console.log('[TASK-2] Rectification task error boundaries & concurrency');
+  const taskEx2 = await request('POST', '/api/exceptions', { shiftId: tsid, type: 'stock', itemName: 'Water', responsibleStaffId: 'U005', description: 'stock test' }, s2);
+  const teid2 = taskEx2.data.exception.id;
+  const crTask2 = await request('POST', '/api/tasks', { exceptionId: teid2, assigneeId: 'U005', steps: 'check' }, s2);
+  eq(crTask2.status, 200, 'create second task');
+  const tid2 = crTask2.data.task.id;
+  const oldUpdatedAt = crTask2.data.task.updatedAt;
+
+  err(await request('POST', '/api/tasks', { exceptionId: teid2, assigneeId: 'U005' }, s2), '进行中的整改任务', 'duplicate task creation rejected (409)');
+
+  err(await request('POST', `/api/tasks/${tid2}/assign`, { assigneeId: 'U005' }, m2), '本门店', 'cross-store manager cannot assign task (403)');
+  eq((await request('GET', `/api/tasks/${tid2}`, null, m1)).data.task.status, 'pending', 'task status unchanged after cross-store assign fail');
+
+  err(await request('POST', `/api/tasks/${tid2}/assign`, { assigneeId: 'U006' }, m1), '必须属于本门店', 'assign to other-store user rejected (400)');
+
+  err(await request('POST', `/api/tasks/${tid2}/submit`, { submitNote: 'x' }, s4), '本门店', 'other-store staff cannot submit task (403)');
+
+  err(await request('POST', `/api/tasks/${tid}/accept`, { closeNote: 'x' }, m1), '不可验收', 'closed task cannot be accepted again (400)');
+
+  err(await request('GET', `/api/tasks/${tid2}`, null, s4), '无权查看', 'other-store staff cannot view task (403)');
+
+  await request('POST', `/api/tasks/${tid2}/assign`, { assigneeId: 'U005' }, m1);
+  const staleUpdatedAt = oldUpdatedAt;
+  err(await request('POST', `/api/tasks/${tid2}/submit`, { submitNote: 'stale', updatedAt: staleUpdatedAt }, s3), '已被他人修改', 'stale submit rejected (409)');
+  console.log();
+
+  console.log('[TASK-3] Rectification task reject loop');
+  const taskEx3 = await request('POST', '/api/exceptions', { shiftId: tsid, type: 'cash', amount: 50, responsibleStaffId: 'U003', description: 'reject test' }, s2);
+  const teid3 = taskEx3.data.exception.id;
+  const crTask3 = await request('POST', '/api/tasks', { exceptionId: teid3, assigneeId: 'U003', steps: 'a' }, s2);
+  const tid3 = crTask3.data.task.id;
+  await request('POST', `/api/tasks/${tid3}/assign`, {}, m1);
+  await request('POST', `/api/tasks/${tid3}/submit`, { submitNote: 'done' }, s1);
+  eq((await request('GET', `/api/tasks/${tid3}`, null, m1)).data.task.status, 'submitted', 'before reject = submitted');
+  const rej = await request('POST', `/api/tasks/${tid3}/reject`, { rejectNote: 'incomplete' }, m1);
+  eq(rej.data.task.status, 'rejected', 'after reject = rejected');
+  eq(rej.data.task.rejectNote, 'incomplete', 'rejectNote preserved');
+  const resub = await request('POST', `/api/tasks/${tid3}/submit`, { submitNote: 'fixed' }, s1);
+  eq(resub.data.task.status, 'submitted', 'after re-submit = submitted');
+  const acc2 = await request('POST', `/api/tasks/${tid3}/accept`, { closeNote: 'ok now' }, m1);
+  eq(acc2.data.task.status, 'closed', 're-submit then accept = closed');
+  console.log();
+
+  console.log('[4/8] CSV / JSON export');
   const csvRes = await request('GET', '/api/export/shifts?storeId=S001&format=csv', null, m1);
   eq(csvRes.status, 200, 'shifts CSV export');
   if (typeof csvRes.data !== 'string' || !csvRes.data.includes('班次ID')) {
@@ -232,14 +312,29 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
     throw new Error('FAIL exceptions JSON content: expected { exceptions: [...] }, got: ' + String(excJsonRes.data).slice(0, 80));
   }
   console.log('  OK exceptions JSON content validated (has exceptions array)');
+
+  const taskCsvRes = await request('GET', '/api/export/tasks?storeId=S001&format=csv', null, m1);
+  eq(taskCsvRes.status, 200, 'tasks CSV export');
+  if (typeof taskCsvRes.data !== 'string' || !taskCsvRes.data.includes('任务ID')) {
+    throw new Error('FAIL tasks CSV content: expected CSV header with 任务ID, got: ' + String(taskCsvRes.data).slice(0, 80));
+  }
+  console.log('  OK tasks CSV content validated (has 任务ID header)');
+
+  const taskJsonRes = await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1);
+  eq(taskJsonRes.status, 200, 'tasks JSON export');
+  if (typeof taskJsonRes.data !== 'object' || !taskJsonRes.data.tasks) {
+    throw new Error('FAIL tasks JSON content: expected { tasks: [...] }, got: ' + String(taskJsonRes.data).slice(0, 80));
+  }
+  console.log('  OK tasks JSON content validated (has tasks array)');
   console.log();
 
-  console.log('[5/6] Operation history');
+  console.log('[5/8] Operation history');
   const hist = (await request('GET', '/api/history', null, m1)).data.history;
   const acts = hist.map(h => h.action);
-  ['CREATE_SHIFT','HANDOVER_SHIFT','CONFIRM_SHIFT','CREATE_EXCEPTION','SUBMIT_REVIEW','HANDLE_EXCEPTION','CLOSE_EXCEPTION','CLOSE_SHIFT']
+  ['CREATE_SHIFT','HANDOVER_SHIFT','CONFIRM_SHIFT','CREATE_EXCEPTION','SUBMIT_REVIEW','HANDLE_EXCEPTION','CLOSE_EXCEPTION','CLOSE_SHIFT',
+   'CREATE_TASK','ASSIGN_TASK','SUBMIT_TASK','ACCEPT_TASK','REJECT_TASK']
     .forEach(a => { if (!acts.includes(a)) throw new Error(`missing history action: ${a}`); });
-  console.log(`  OK all 8 action types present (total=${hist.length})`);
+  console.log(`  OK all 13 action types present (total=${hist.length})`);
   console.log();
 
   console.log('=== Phase 2: Snapshot, REAL restart (kill old PID, spawn new process), verify persistence ===');
@@ -249,6 +344,10 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
     shiftsJson: (await request('GET', '/api/export/shifts?storeId=S001&format=json', null, m1)).data,
     excCsv: (await request('GET', '/api/export/exceptions?storeId=S001&format=csv', null, m1)).data,
     excJson: (await request('GET', '/api/export/exceptions?storeId=S001&format=json', null, m1)).data,
+    task: (await request('GET', `/api/tasks/${tid}`, null, m1)).data,
+    taskList: (await request('GET', '/api/tasks?storeId=S001', null, m1)).data,
+    taskCsv: (await request('GET', '/api/export/tasks?storeId=S001&format=csv', null, m1)).data,
+    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1)).data
   };
   if (typeof before.shiftsCsv !== 'string' || !before.shiftsCsv.includes('班次ID')) {
     throw new Error('FAIL before.shiftsCsv is not valid CSV (missing 班次ID header)');
@@ -262,7 +361,16 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   if (typeof before.excJson !== 'object' || !before.excJson.exceptions) {
     throw new Error('FAIL before.excJson is not valid export data (missing exceptions array)');
   }
-  console.log(`  First-run PID=${serverPidFirstRun}, snapshot saved for shift=${sid}`);
+  if (typeof before.taskCsv !== 'string' || !before.taskCsv.includes('任务ID')) {
+    throw new Error('FAIL before.taskCsv is not valid CSV (missing 任务ID header)');
+  }
+  if (typeof before.taskJson !== 'object' || !before.taskJson.tasks) {
+    throw new Error('FAIL before.taskJson is not valid export data (missing tasks array)');
+  }
+  if (!before.task.task || before.task.task.status !== 'closed') {
+    throw new Error('FAIL before.task is not a valid closed task');
+  }
+  console.log(`  First-run PID=${serverPidFirstRun}, snapshot saved for shift=${sid}, task=${tid}`);
 
   console.log();
   console.log('  Stopping server (SIGTERM, real kill)...');
@@ -281,13 +389,17 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   console.log('  Re-logging in (in-memory session cleared after restart)...\n');
   const m1r = await login('manager1', 'manager123');
 
-  console.log('[6/6] Persistence after real restart');
+  console.log('[6/8] Persistence after real restart');
   const after = {
     shift: (await request('GET', `/api/shifts/${sid}`, null, m1r)).data,
     shiftsCsv: (await request('GET', '/api/export/shifts?storeId=S001&format=csv', null, m1r)).data,
     shiftsJson: (await request('GET', '/api/export/shifts?storeId=S001&format=json', null, m1r)).data,
     excCsv: (await request('GET', '/api/export/exceptions?storeId=S001&format=csv', null, m1r)).data,
     excJson: (await request('GET', '/api/export/exceptions?storeId=S001&format=json', null, m1r)).data,
+    task: (await request('GET', `/api/tasks/${tid}`, null, m1r)).data,
+    taskList: (await request('GET', '/api/tasks?storeId=S001', null, m1r)).data,
+    taskCsv: (await request('GET', '/api/export/tasks?storeId=S001&format=csv', null, m1r)).data,
+    taskJson: (await request('GET', '/api/export/tasks?storeId=S001&format=json', null, m1r)).data
   };
 
   eq(after.shift.shift.status, before.shift.shift.status, 'shift status preserved');
@@ -302,6 +414,16 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   eq(JSON.stringify(after.shiftsJson), JSON.stringify(before.shiftsJson), 'shifts JSON identical');
   eq(after.excCsv, before.excCsv, 'exceptions CSV identical');
   eq(JSON.stringify(after.excJson), JSON.stringify(before.excJson), 'exceptions JSON identical');
+
+  eq(after.task.task.status, before.task.task.status, 'task status preserved');
+  eq(after.task.task.assigneeName, before.task.task.assigneeName, 'task assigneeName preserved');
+  eq(after.task.task.closedByName, before.task.task.closedByName, 'task closedByName preserved');
+  eq(after.task.task.closeNote, before.task.task.closeNote, 'task closeNote preserved');
+  eq(after.task.task.steps, before.task.task.steps, 'task steps preserved');
+  eq(after.task.task.statusHistory.length, before.task.task.statusHistory.length, 'task statusHistory length preserved');
+  eq(after.taskList.tasks.length, before.taskList.tasks.length, 'task list count preserved');
+  eq(after.taskCsv, before.taskCsv, 'tasks CSV identical');
+  eq(JSON.stringify(after.taskJson), JSON.stringify(before.taskJson), 'tasks JSON identical');
 
   console.log();
   console.log('=== Cleanup: stop server, delete temp data dir ===');

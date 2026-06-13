@@ -310,6 +310,12 @@ table tbody tr:hover {
 .badge-cash { background: #dbeafe; color: #1e40af; }
 .badge-stock { background: #ede9fe; color: #6d28d9; }
 
+.badge-task-pending { background: #fee2e2; color: #991b1b; }
+.badge-task-assigned { background: #dbeafe; color: #1e40af; }
+.badge-task-submitted { background: #fef3c7; color: #92400e; }
+.badge-task-rejected { background: #fecaca; color: #7f1d1d; }
+.badge-task-closed { background: #f3f4f6; color: #6b7280; }
+
 .modal-overlay {
   position: fixed;
   inset: 0;

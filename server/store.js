@@ -8,7 +8,7 @@ const CONFIG_DIR = path.join(__dirname, '..', 'config');
 
 function ensureDataFiles() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  ['shifts.json', 'exceptions.json', 'history.json'].forEach(f => {
+  ['shifts.json', 'exceptions.json', 'history.json', 'tasks.json'].forEach(f => {
     const fp = path.join(DATA_DIR, f);
     if (!fs.existsSync(fp)) fs.writeFileSync(fp, '[]\n', 'utf-8');
   });
@@ -78,6 +78,14 @@ function genId(prefix) {
   return prefix + Date.now() + Math.floor(Math.random() * 1000);
 }
 
+function getTasks() {
+  return readJSON(path.join(DATA_DIR, 'tasks.json'));
+}
+
+function saveTasks(tasks) {
+  writeJSON(path.join(DATA_DIR, 'tasks.json'), tasks);
+}
+
 module.exports = {
   getStores,
   getChecklist,
@@ -90,5 +98,7 @@ module.exports = {
   getHistory,
   saveHistory,
   addHistory,
-  genId
+  genId,
+  getTasks,
+  saveTasks
 };

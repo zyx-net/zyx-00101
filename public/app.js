@@ -33,6 +33,14 @@ const EX_STATUS_MAP = {
   closed: { label: '已关闭', cls: 'badge-closed' }
 };
 
+const TASK_STATUS_MAP = {
+  pending: { label: '待分派', cls: 'badge-task-pending' },
+  assigned: { label: '已分派', cls: 'badge-task-assigned' },
+  submitted: { label: '已提交', cls: 'badge-task-submitted' },
+  rejected: { label: '已驳回', cls: 'badge-task-rejected' },
+  closed: { label: '已关闭', cls: 'badge-task-closed' }
+};
+
 const ACTION_MAP = {
   CREATE_SHIFT: '创建班次',
   HANDOVER_SHIFT: '提交交接',
@@ -42,7 +50,12 @@ const ACTION_MAP = {
   RETURN_SHIFT: '退回班次',
   CREATE_EXCEPTION: '登记异常',
   HANDLE_EXCEPTION: '处理异常',
-  CLOSE_EXCEPTION: '关闭异常'
+  CLOSE_EXCEPTION: '关闭异常',
+  CREATE_TASK: '发起整改',
+  ASSIGN_TASK: '分派整改',
+  SUBMIT_TASK: '提交整改',
+  ACCEPT_TASK: '验收整改',
+  REJECT_TASK: '驳回整改'
 };
 
 let state = {
@@ -178,6 +191,7 @@ function renderLayout() {
     case 'dashboard': pageContent = renderDashboard(); break;
     case 'shifts': pageContent = renderShifts(); break;
     case 'exceptions': pageContent = renderExceptions(); break;
+    case 'tasks': pageContent = renderTasks(); break;
     case 'history': pageContent = renderHistory(); break;
     default: pageContent = renderDashboard();
   }
@@ -197,6 +211,7 @@ function renderSidebar() {
     { key: 'dashboard', label: '工作台' },
     { key: 'shifts', label: '班次管理' },
     { key: 'exceptions', label: '异常管理' },
+    { key: 'tasks', label: '整改任务' },
     { key: 'history', label: '操作历史' }
   ];
   menus.forEach(m => {
@@ -579,6 +594,126 @@ function renderHistory() {
   return wrap;
 }
 
+function renderTasks() {
+  const wrap = h('div', {});
+  const header = h('div', { class: 'page-header' });
+  header.appendChild(h('h1', {}, '整改任务'));
+  const actions = h('div', { class: 'actions' });
+  actions.appendChild(h('button', {
+    class: 'btn btn-outline btn-sm',
+    onclick: () => exportData('tasks', 'csv')
+  }, '导出CSV'));
+  actions.appendChild(h('button', {
+    class: 'btn btn-outline btn-sm',
+    onclick: () => exportData('tasks', 'json')
+  }, '导出JSON'));
+  header.appendChild(actions);
+  wrap.appendChild(header);
+
+  const filter = h('div', { class: 'card' });
+  const fb = h('div', { class: 'filter-bar' });
+
+  const storeGroup = h('div', { class: 'form-group' });
+  storeGroup.appendChild(h('label', {}, '门店'));
+  const storeSel = h('select', {});
+  storeSel.appendChild(h('option', { value: '' }, '全部'));
+  state.stores.forEach(s => {
+    const opt = h('option', { value: s.id }, s.name);
+    if (state.user.role === 'staff' && s.id === state.user.storeId) opt.selected = true;
+    storeSel.appendChild(opt);
+  });
+  if (state.user.role === 'staff') storeSel.disabled = true;
+  storeGroup.appendChild(storeSel);
+  fb.appendChild(storeGroup);
+
+  const statusGroup = h('div', { class: 'form-group' });
+  statusGroup.appendChild(h('label', {}, '状态'));
+  const statusSel = h('select', {});
+  statusSel.appendChild(h('option', { value: '' }, '全部'));
+  Object.entries(TASK_STATUS_MAP).forEach(([k, v]) => {
+    statusSel.appendChild(h('option', { value: k }, v.label));
+  });
+  statusGroup.appendChild(statusSel);
+  fb.appendChild(statusGroup);
+
+  const mineGroup = h('div', { class: 'form-group' });
+  mineGroup.appendChild(h('label', {}, '范围'));
+  const mineSel = h('select', {});
+  mineSel.appendChild(h('option', { value: '' }, '全部'));
+  mineSel.appendChild(h('option', { value: '1' }, '待我处理'));
+  mineGroup.appendChild(mineSel);
+  fb.appendChild(mineGroup);
+
+  const queryBtn = h('button', { class: 'btn btn-primary btn-sm' }, '查询');
+  fb.appendChild(queryBtn);
+  const resetBtn = h('button', { class: 'btn btn-outline btn-sm' }, '重置');
+  fb.appendChild(resetBtn);
+  filter.appendChild(fb);
+  wrap.appendChild(filter);
+
+  const listCard = h('div', { class: 'card' });
+  const tbody = h('tbody', {});
+  tbody.appendChild(h('tr', {}, h('td', { colspan: '9', style: 'text-align:center;padding:40px;color:#6b7280;' }, '加载中...')));
+  const table = h('table', {}, [
+    h('thead', {}, h('tr', {}, [
+      h('th', {}, '任务ID'),
+      h('th', {}, '标题'),
+      h('th', {}, '责任人'),
+      h('th', {}, '截止时间'),
+      h('th', {}, '状态'),
+      h('th', {}, '发起人'),
+      h('th', {}, '创建时间'),
+      h('th', {}, '操作')
+    ])),
+    tbody
+  ]);
+  listCard.appendChild(table);
+  wrap.appendChild(listCard);
+
+  async function loadData() {
+    try {
+      const params = new URLSearchParams();
+      if (storeSel.value) params.set('storeId', storeSel.value);
+      if (statusSel.value) params.set('status', statusSel.value);
+      if (mineSel.value) params.set('mine', mineSel.value);
+      const url = '/api/tasks' + (params.toString() ? '?' + params.toString() : '');
+      const r = await API.get(url);
+      tbody.innerHTML = '';
+      if (r.tasks.length === 0) {
+        tbody.appendChild(h('tr', {}, h('td', { colspan: '9', style: 'text-align:center;padding:40px;color:#6b7280;' }, '暂无数据')));
+        return;
+      }
+      r.tasks.forEach(t => {
+        const st = TASK_STATUS_MAP[t.status] || { label: t.status, cls: '' };
+        const tr = h('tr', {}, [
+          h('td', {}, t.id),
+          h('td', {}, t.title || '-'),
+          h('td', {}, t.assigneeName || '-'),
+          h('td', {}, t.deadline || '-'),
+          h('td', {}, h('span', { class: 'badge ' + st.cls }, st.label)),
+          h('td', {}, t.createdByName || '-'),
+          h('td', {}, formatDate(t.createdAt)),
+          h('td', {}, h('button', {
+            class: 'btn btn-outline btn-sm',
+            onclick: () => openTaskDetail(t.id)
+          }, '详情'))
+        ]);
+        tbody.appendChild(tr);
+      });
+    } catch (e) { toast(e.message); }
+  }
+  queryBtn.onclick = loadData;
+  resetBtn.onclick = () => {
+    storeSel.value = state.user.role === 'staff' ? state.user.storeId : '';
+    statusSel.value = '';
+    mineSel.value = '';
+    loadData();
+  };
+  setTimeout(loadData, 0);
+
+  return wrap;
+}
+
 function openCreateShift() {
   state.modal = { type: 'createShift' };
   render();
@@ -599,6 +734,16 @@ function openCloseException(id, backToShift) {
   render();
 }
 
+function openCreateTask(exceptionId, backToShift) {
+  state.modal = { type: 'createTask', exceptionId, backToShift: backToShift || null };
+  render();
+}
+
+function openTaskDetail(id) {
+  state.modal = { type: 'taskDetail', taskId: id };
+  render();
+}
+
 function renderModal() {
   const overlay = h('div', { class: 'modal-overlay', onclick: (e) => { if (e.target === overlay) closeModal(); } });
   const modal = h('div', { class: 'modal' });
@@ -608,6 +753,8 @@ function renderModal() {
     case 'shiftDetail': content = renderShiftDetailModal(); break;
     case 'handleException': content = renderHandleExceptionModal(); break;
     case 'closeException': content = renderCloseExceptionModal(); break;
+    case 'createTask': content = renderCreateTaskModal(); break;
+    case 'taskDetail': content = renderTaskDetailModal(); break;
     default: content = h('div', {}, '未知');
   }
   modal.appendChild(content);
@@ -839,8 +986,13 @@ function renderShiftDetailModal() {
         if (e.status === 'open') {
           ops.appendChild(h('button', {
             class: 'btn btn-success btn-sm',
+            style: 'margin-right:4px;',
             onclick: () => openHandleException(e.id, s.id)
           }, '处理'));
+          ops.appendChild(h('button', {
+            class: 'btn btn-warning btn-sm',
+            onclick: () => openCreateTask(e.id, s.id)
+          }, '发起整改'));
         }
         if (e.status === 'handled' && state.user.role === 'manager') {
           ops.appendChild(h('button', {
@@ -1100,6 +1252,267 @@ function renderCloseExceptionModal() {
   return wrap;
 }
 
+function renderCreateTaskModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [
+    h('h2', {}, '发起整改任务'),
+    h('button', { class: 'modal-close', onclick: () => backFromException() }, '×')
+  ]));
+  const body = h('div', { class: 'modal-body' });
+
+  const titleGroup = h('div', { class: 'form-group' });
+  titleGroup.appendChild(h('label', {}, '任务标题'));
+  const titleInput = h('input', { type: 'text', placeholder: '请输入任务标题，可选自动生成' });
+  titleGroup.appendChild(titleInput);
+  body.appendChild(titleGroup);
+
+  const row1 = h('div', { class: 'row' });
+  const respGroup = h('div', { class: 'form-group' });
+  respGroup.appendChild(h('label', {}, '责任人'));
+  const respSel = h('select', { required: 'required' });
+  respSel.appendChild(h('option', { value: '' }, '请选择'));
+  const storeUsers = state.users.filter(u => u.storeId === state.user.storeId);
+  storeUsers.forEach(u => respSel.appendChild(h('option', { value: u.id }, u.name)));
+  respGroup.appendChild(respSel);
+  row1.appendChild(respGroup);
+
+  const dlGroup = h('div', { class: 'form-group' });
+  dlGroup.appendChild(h('label', {}, '截止时间'));
+  const dlInput = h('input', { type: 'date' });
+  dlGroup.appendChild(dlInput);
+  row1.appendChild(dlGroup);
+  body.appendChild(row1);
+
+  const stepsGroup = h('div', { class: 'form-group' });
+  stepsGroup.appendChild(h('label', {}, '处理步骤'));
+  const stepsInput = h('textarea', { placeholder: '请描述处理步骤（如：盘点库存、调阅监控、联系供应商等）' });
+  stepsGroup.appendChild(stepsInput);
+  body.appendChild(stepsGroup);
+
+  const attachGroup = h('div', { class: 'form-group' });
+  attachGroup.appendChild(h('label', {}, '附件说明'));
+  const attachInput = h('textarea', { placeholder: '请填写附件/相关凭证说明（如：上传照片编号、单据号等）' });
+  attachGroup.appendChild(attachInput);
+  body.appendChild(attachGroup);
+
+  wrap.appendChild(body);
+
+  const footer = h('div', { class: 'modal-footer' });
+  footer.appendChild(h('button', { class: 'btn btn-outline', onclick: () => backFromException() }, '取消'));
+  footer.appendChild(h('button', {
+    class: 'btn btn-primary',
+    onclick: async () => {
+      try {
+        if (!respSel.value) { toast('请选择责任人'); return; }
+        await API.post('/api/tasks', {
+          exceptionId: state.modal.exceptionId,
+          title: titleInput.value,
+          assigneeId: respSel.value,
+          deadline: dlInput.value,
+          steps: stepsInput.value,
+          attachmentNote: attachInput.value
+        });
+        toast('整改任务已创建', 'success');
+        backFromException();
+      } catch (e) { toast(e.message); }
+    }
+  }, '提交'));
+  wrap.appendChild(footer);
+  return wrap;
+}
+
+function renderTaskDetailModal() {
+  const wrap = h('div', {});
+  wrap.appendChild(h('div', { class: 'modal-header' }, [
+    h('h2', {}, '整改任务详情'),
+    h('button', { class: 'modal-close', onclick: closeModal }, '×')
+  ]));
+  const body = h('div', { class: 'modal-body' }, h('div', { class: 'empty-state' }, '加载中...'));
+  wrap.appendChild(body);
+
+  (async () => {
+    try {
+      const r = await API.get('/api/tasks/' + state.modal.taskId);
+      paintTaskDetail(r.task);
+    } catch (e) { toast(e.message); }
+  })();
+
+  function paintTaskDetail(t) {
+    body.innerHTML = '';
+    const st = TASK_STATUS_MAP[t.status] || { label: t.status, cls: '' };
+    const store = state.stores.find(x => x.id === t.storeId);
+
+    const infoCard = h('div', {});
+    infoCard.appendChild(h('h3', {}, '基本信息'));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '任务ID'), h('div', { class: 'value' }, t.id)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '门店'), h('div', { class: 'value' }, store ? store.name : t.storeId)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '标题'), h('div', { class: 'value' }, t.title)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '关联异常'), h('div', { class: 'value' }, t.exceptionId + ' / ' + t.shiftId)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '责任人'), h('div', { class: 'value' }, t.assigneeName)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '截止时间'), h('div', { class: 'value' }, t.deadline || '-')]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '状态'), h('div', { class: 'value' }, h('span', { class: 'badge ' + st.cls }, st.label))]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '发起人'), h('div', { class: 'value' }, t.createdByName)]));
+    infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '创建时间'), h('div', { class: 'value' }, formatDate(t.createdAt))]));
+    if (t.assignedAt) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '分派时间'), h('div', { class: 'value' }, formatDate(t.assignedAt))]));
+    if (t.assignedByName) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '分派人'), h('div', { class: 'value' }, t.assignedByName)]));
+    if (t.submittedAt) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '提交时间'), h('div', { class: 'value' }, formatDate(t.submittedAt))]));
+    if (t.closedAt) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '关闭时间'), h('div', { class: 'value' }, formatDate(t.closedAt))]));
+    if (t.description) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '异常描述'), h('div', { class: 'value' }, t.description)]));
+    if (t.steps) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '处理步骤'), h('div', { class: 'value' }, t.steps)]));
+    if (t.attachmentNote) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '附件说明'), h('div', { class: 'value' }, t.attachmentNote)]));
+    if (t.submitNote) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '提交说明'), h('div', { class: 'value' }, t.submitNote)]));
+    if (t.rejectNote) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '驳回原因'), h('div', { class: 'value' }, t.rejectNote)]));
+    if (t.closeNote) infoCard.appendChild(h('div', { class: 'detail-row' }, [h('div', { class: 'label' }, '关闭说明'), h('div', { class: 'value' }, t.closeNote)]));
+    body.appendChild(infoCard);
+
+    const histCard = h('div', { style: 'margin-top:16px;' });
+    histCard.appendChild(h('h3', {}, '状态历史'));
+    const histBody = h('div', {});
+    (t.statusHistory || []).forEach(item => {
+      const hi = h('div', { class: 'history-item' });
+      hi.appendChild(h('div', { class: 'hi-time' }, formatDate(item.at)));
+      const labelMap = TASK_STATUS_MAP[item.status] || { label: item.status };
+      hi.appendChild(h('div', { class: 'hi-action' }, labelMap.label));
+      hi.appendChild(h('div', { class: 'hi-user' }, item.byName));
+      hi.appendChild(h('div', { class: 'hi-detail' }, item.note || '-'));
+      histBody.appendChild(hi);
+    });
+    histCard.appendChild(histBody);
+    body.appendChild(histCard);
+
+    const actionsBar = h('div', { style: 'margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;' });
+    if ((t.status === 'pending' || t.status === 'rejected') && state.user.role === 'manager' && t.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', {
+        class: 'btn btn-primary',
+        onclick: () => openAssignTask(t)
+      }, '分派任务'));
+      if (t.status === 'pending') {
+        actionsBar.appendChild(h('button', {
+          class: 'btn btn-danger',
+          onclick: async () => {
+            const note = prompt('请输入驳回原因：');
+            if (note == null) return;
+            try {
+              await API.post('/api/tasks/' + t.id + '/reject', { rejectNote: note, updatedAt: t.updatedAt });
+              toast('已驳回', 'success');
+              state.modal = { type: 'taskDetail', taskId: t.id };
+              render();
+            } catch (e) { toast(e.message); }
+          }
+        }, '驳回'));
+      }
+    }
+    if ((t.status === 'assigned' || t.status === 'rejected') && (t.assigneeId === state.user.id || state.user.role === 'manager') && t.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', {
+        class: 'btn btn-success',
+        onclick: () => openSubmitTask(t)
+      }, '提交整改完成'));
+    }
+    if (t.status === 'submitted' && state.user.role === 'manager' && t.storeId === state.user.storeId) {
+      actionsBar.appendChild(h('button', {
+        class: 'btn btn-success',
+        onclick: async () => {
+          const note = prompt('请输入验收意见（可选）：') || '';
+          try {
+            await API.post('/api/tasks/' + t.id + '/accept', { closeNote: note, updatedAt: t.updatedAt });
+            toast('已验收关闭', 'success');
+            state.modal = { type: 'taskDetail', taskId: t.id };
+            render();
+          } catch (e) { toast(e.message); }
+        }
+      }, '验收关闭'));
+      actionsBar.appendChild(h('button', {
+        class: 'btn btn-danger',
+        onclick: async () => {
+          const note = prompt('请输入驳回原因：');
+          if (note == null) return;
+          try {
+            await API.post('/api/tasks/' + t.id + '/reject', { rejectNote: note, updatedAt: t.updatedAt });
+            toast('已驳回', 'success');
+            state.modal = { type: 'taskDetail', taskId: t.id };
+            render();
+          } catch (e) { toast(e.message); }
+        }
+      }, '驳回'));
+    }
+    if (actionsBar.children.length > 0) body.appendChild(actionsBar);
+  }
+
+  function openAssignTask(t) {
+    body.innerHTML = '';
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '分派整改任务'));
+    const respGroup = h('div', { class: 'form-group' });
+    respGroup.appendChild(h('label', {}, '责任人'));
+    const respSel = h('select', {});
+    const storeUsers = state.users.filter(u => u.storeId === state.user.storeId);
+    storeUsers.forEach(u => {
+      const opt = h('option', { value: u.id }, u.name);
+      if (u.id === t.assigneeId) opt.selected = true;
+      respSel.appendChild(opt);
+    });
+    respGroup.appendChild(respSel);
+    card.appendChild(respGroup);
+
+    const noteGroup = h('div', { class: 'form-group' });
+    noteGroup.appendChild(h('label', {}, '分派说明'));
+    const noteInput = h('textarea', { placeholder: '可选' });
+    noteGroup.appendChild(noteInput);
+    card.appendChild(noteGroup);
+
+    const btnRow = h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;margin-top:8px;' });
+    btnRow.appendChild(h('button', {
+      class: 'btn btn-outline',
+      onclick: () => { state.modal = { type: 'taskDetail', taskId: t.id }; render(); }
+    }, '取消'));
+    btnRow.appendChild(h('button', {
+      class: 'btn btn-primary',
+      onclick: async () => {
+        try {
+          await API.post('/api/tasks/' + t.id + '/assign', { assigneeId: respSel.value, note: noteInput.value });
+          toast('已分派', 'success');
+          state.modal = { type: 'taskDetail', taskId: t.id };
+          render();
+        } catch (e) { toast(e.message); }
+      }
+    }, '确认分派'));
+    card.appendChild(btnRow);
+    body.appendChild(card);
+  }
+
+  function openSubmitTask(t) {
+    body.innerHTML = '';
+    const card = h('div', {});
+    card.appendChild(h('h3', {}, '提交整改完成'));
+    const noteGroup = h('div', { class: 'form-group' });
+    noteGroup.appendChild(h('label', {}, '处理完成说明'));
+    const noteInput = h('textarea', { placeholder: '请详细说明处理结果', required: 'required' });
+    noteGroup.appendChild(noteInput);
+    card.appendChild(noteGroup);
+
+    const btnRow = h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;margin-top:8px;' });
+    btnRow.appendChild(h('button', {
+      class: 'btn btn-outline',
+      onclick: () => { state.modal = { type: 'taskDetail', taskId: t.id }; render(); }
+    }, '取消'));
+    btnRow.appendChild(h('button', {
+      class: 'btn btn-success',
+      onclick: async () => {
+        try {
+          await API.post('/api/tasks/' + t.id + '/submit', { submitNote: noteInput.value, updatedAt: t.updatedAt });
+          toast('已提交', 'success');
+          state.modal = { type: 'taskDetail', taskId: t.id };
+          render();
+        } catch (e) { toast(e.message); }
+      }
+    }, '确认提交'));
+    card.appendChild(btnRow);
+    body.appendChild(card);
+  }
+
+  return wrap;
+}
+
 function backFromException() {
   if (state.modal.backToShift) {
     state.modal = { type: 'shiftDetail', shiftId: state.modal.backToShift };
@@ -1111,10 +1524,12 @@ function backFromException() {
 
 function exportData(type, format) {
   const storeInput = prompt('按门店ID导出（留空导出全部，例如 S001）：') || '';
-  const dateInput = prompt('按日期导出（留空导出全部，格式 YYYY-MM-DD）：') || '';
   const params = new URLSearchParams();
   if (storeInput) params.set('storeId', storeInput);
-  if (dateInput) params.set('date', dateInput);
+  if (type !== 'tasks') {
+    const dateInput = prompt('按日期导出（留空导出全部，格式 YYYY-MM-DD）：') || '';
+    if (dateInput) params.set('date', dateInput);
+  }
   params.set('format', format);
   window.open('/api/export/' + type + '?' + params.toString(), '_blank');
 }

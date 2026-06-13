@@ -595,6 +595,348 @@ app.get('/api/export/exceptions', requireAuth, (req, res) => {
   res.json({ exceptions: data });
 });
 
+const TASK_STATUS = {
+  PENDING: 'pending',
+  ASSIGNED: 'assigned',
+  SUBMITTED: 'submitted',
+  REJECTED: 'rejected',
+  CLOSED: 'closed'
+};
+
+function requireSameStore(task) {
+  return function (user) {
+    return task.storeId === user.storeId;
+  };
+}
+
+app.get('/api/tasks', requireAuth, (req, res) => {
+  const { storeId, status, assigneeId, mine } = req.query;
+  let tasks = db.getTasks();
+  if (req.session.user.role === 'staff') {
+    tasks = tasks.filter(t => t.storeId === req.session.user.storeId);
+  }
+  if (storeId) tasks = tasks.filter(t => t.storeId === storeId);
+  if (status) tasks = tasks.filter(t => t.status === status);
+  if (assigneeId) tasks = tasks.filter(t => t.assigneeId === assigneeId);
+  if (mine === '1') {
+    tasks = tasks.filter(t =>
+      (t.assigneeId === req.session.user.id && (t.status === TASK_STATUS.ASSIGNED || t.status === TASK_STATUS.REJECTED)) ||
+      (req.session.user.role === 'manager' && t.storeId === req.session.user.storeId && t.status === TASK_STATUS.PENDING) ||
+      (req.session.user.role === 'manager' && t.storeId === req.session.user.storeId && t.status === TASK_STATUS.SUBMITTED)
+    );
+  }
+  tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  res.json({ tasks });
+});
+
+app.get('/api/tasks/:id', requireAuth, (req, res) => {
+  const task = db.getTasks().find(t => t.id === req.params.id);
+  if (!task) return res.status(404).json({ error: '整改任务不存在' });
+  if (req.session.user.role === 'staff' && task.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '无权查看非本门店整改任务' });
+  }
+  res.json({ task });
+});
+
+app.post('/api/tasks', requireAuth, (req, res) => {
+  const { exceptionId, title, assigneeId, deadline, steps, attachmentNote } = req.body;
+  const exceptions = db.getExceptions();
+  const ex = exceptions.find(e => e.id === exceptionId);
+  if (!ex) return res.status(404).json({ error: '关联异常不存在' });
+  const shift = db.getShifts().find(s => s.id === ex.shiftId);
+  if (!shift) return res.status(404).json({ error: '关联班次不存在' });
+  if (req.session.user.role === 'staff' && shift.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅可为本门店异常发起整改' });
+  }
+  const existing = db.getTasks().find(t => t.exceptionId === exceptionId && t.status !== TASK_STATUS.CLOSED && t.status !== TASK_STATUS.REJECTED);
+  if (existing) {
+    return res.status(409).json({ error: '该异常已有进行中的整改任务，不可重复创建' });
+  }
+  const users = db.getUsers();
+  const assignee = users.find(u => u.id === assigneeId);
+  if (!assignee) return res.status(400).json({ error: '责任人不存在' });
+  if (assignee.storeId !== shift.storeId) {
+    return res.status(400).json({ error: '责任人必须属于本门店' });
+  }
+  const now = new Date().toISOString();
+  const task = {
+    id: db.genId('RT'),
+    exceptionId,
+    shiftId: ex.shiftId,
+    storeId: shift.storeId,
+    title: title || ('整改: ' + (ex.type === 'cash' ? '现金差额' : '库存短缺') + ' ' + (ex.itemName || '')),
+    description: ex.description || '',
+    assigneeId,
+    assigneeName: assignee.name,
+    deadline: deadline || '',
+    steps: steps || '',
+    attachmentNote: attachmentNote || '',
+    status: TASK_STATUS.PENDING,
+    statusHistory: [
+      { status: TASK_STATUS.PENDING, by: req.session.user.id, byName: req.session.user.name, at: now, note: '发起整改' }
+    ],
+    createdBy: req.session.user.id,
+    createdByName: req.session.user.name,
+    createdAt: now,
+    updatedAt: now,
+    assignedAt: null,
+    assignedBy: null,
+    assignedByName: '',
+    submittedAt: null,
+    submittedBy: null,
+    submittedByName: '',
+    submitNote: '',
+    rejectedAt: null,
+    rejectedBy: null,
+    rejectedByName: '',
+    rejectNote: '',
+    closedAt: null,
+    closedBy: null,
+    closedByName: '',
+    closeNote: ''
+  };
+  const tasks = db.getTasks();
+  tasks.push(task);
+  db.saveTasks(tasks);
+  db.addHistory({
+    action: 'CREATE_TASK',
+    shiftId: ex.shiftId,
+    exceptionId,
+    taskId: task.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: `发起整改任务 ${task.id}，责任人: ${assignee.name}`
+  });
+  res.json({ task });
+});
+
+app.post('/api/tasks/:id/assign', requireManager, (req, res) => {
+  const { assigneeId, note } = req.body;
+  const tasks = db.getTasks();
+  const idx = tasks.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '整改任务不存在' });
+  const task = tasks[idx];
+  if (task.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可分派整改任务' });
+  }
+  if (task.status !== TASK_STATUS.PENDING && task.status !== TASK_STATUS.REJECTED) {
+    return res.status(400).json({ error: `当前状态 [${task.status}] 不可分派，仅待分派或已驳回状态可分派` });
+  }
+  const users = db.getUsers();
+  let newAssigneeId = task.assigneeId;
+  let newAssigneeName = task.assigneeName;
+  if (assigneeId) {
+    const assignee = users.find(u => u.id === assigneeId);
+    if (!assignee) return res.status(400).json({ error: '责任人不存在' });
+    if (assignee.storeId !== task.storeId) return res.status(400).json({ error: '责任人必须属于本门店' });
+    newAssigneeId = assignee.id;
+    newAssigneeName = assignee.name;
+  }
+  const now = new Date().toISOString();
+  task.assigneeId = newAssigneeId;
+  task.assigneeName = newAssigneeName;
+  task.status = TASK_STATUS.ASSIGNED;
+  task.assignedAt = now;
+  task.assignedBy = req.session.user.id;
+  task.assignedByName = req.session.user.name;
+  task.updatedAt = now;
+  task.statusHistory.push({ status: TASK_STATUS.ASSIGNED, by: req.session.user.id, byName: req.session.user.name, at: now, note: note || '分派整改任务' });
+  tasks[idx] = task;
+  db.saveTasks(tasks);
+  db.addHistory({
+    action: 'ASSIGN_TASK',
+    shiftId: task.shiftId,
+    taskId: task.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: `分派整改任务 ${task.id} 给 ${newAssigneeName}`
+  });
+  res.json({ task });
+});
+
+app.post('/api/tasks/:id/submit', requireAuth, (req, res) => {
+  const { submitNote, updatedAt } = req.body;
+  const tasks = db.getTasks();
+  const idx = tasks.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '整改任务不存在' });
+  const task = tasks[idx];
+  if (task.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店人员可提交整改任务' });
+  }
+  if (task.assigneeId !== req.session.user.id && req.session.user.role !== 'manager') {
+    return res.status(403).json({ error: '仅责任人或店长可提交整改任务' });
+  }
+  if (task.status !== TASK_STATUS.ASSIGNED && task.status !== TASK_STATUS.REJECTED) {
+    return res.status(400).json({ error: `当前状态 [${task.status}] 不可提交，仅已分派或已驳回状态可提交` });
+  }
+  if (updatedAt && task.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '任务已被他人修改，请刷新后重试', currentUpdatedAt: task.updatedAt });
+  }
+  const now = new Date().toISOString();
+  task.status = TASK_STATUS.SUBMITTED;
+  task.submittedAt = now;
+  task.submittedBy = req.session.user.id;
+  task.submittedByName = req.session.user.name;
+  task.submitNote = submitNote || '';
+  task.updatedAt = now;
+  task.statusHistory.push({ status: TASK_STATUS.SUBMITTED, by: req.session.user.id, byName: req.session.user.name, at: now, note: submitNote || '提交整改完成' });
+  tasks[idx] = task;
+  db.saveTasks(tasks);
+  db.addHistory({
+    action: 'SUBMIT_TASK',
+    shiftId: task.shiftId,
+    taskId: task.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: `提交整改任务 ${task.id} 完成处理`
+  });
+  res.json({ task });
+});
+
+app.post('/api/tasks/:id/accept', requireManager, (req, res) => {
+  const { closeNote, updatedAt } = req.body;
+  const tasks = db.getTasks();
+  const idx = tasks.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '整改任务不存在' });
+  const task = tasks[idx];
+  if (task.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可验收整改任务' });
+  }
+  if (task.status !== TASK_STATUS.SUBMITTED) {
+    return res.status(400).json({ error: `当前状态 [${task.status}] 不可验收，仅已提交状态可验收关闭` });
+  }
+  if (updatedAt && task.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '任务已被他人修改，请刷新后重试', currentUpdatedAt: task.updatedAt });
+  }
+  const now = new Date().toISOString();
+  task.status = TASK_STATUS.CLOSED;
+  task.closedAt = now;
+  task.closedBy = req.session.user.id;
+  task.closedByName = req.session.user.name;
+  task.closeNote = closeNote || '';
+  task.updatedAt = now;
+  task.statusHistory.push({ status: TASK_STATUS.CLOSED, by: req.session.user.id, byName: req.session.user.name, at: now, note: closeNote || '验收关闭' });
+  tasks[idx] = task;
+  db.saveTasks(tasks);
+  db.addHistory({
+    action: 'ACCEPT_TASK',
+    shiftId: task.shiftId,
+    taskId: task.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: `验收关闭整改任务 ${task.id}`
+  });
+  res.json({ task });
+});
+
+app.post('/api/tasks/:id/reject', requireManager, (req, res) => {
+  const { rejectNote, updatedAt } = req.body;
+  const tasks = db.getTasks();
+  const idx = tasks.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '整改任务不存在' });
+  const task = tasks[idx];
+  if (task.storeId !== req.session.user.storeId) {
+    return res.status(403).json({ error: '仅本门店店长可驳回整改任务' });
+  }
+  if (task.status !== TASK_STATUS.SUBMITTED && task.status !== TASK_STATUS.PENDING) {
+    return res.status(400).json({ error: `当前状态 [${task.status}] 不可驳回` });
+  }
+  if (updatedAt && task.updatedAt !== updatedAt) {
+    return res.status(409).json({ error: '任务已被他人修改，请刷新后重试', currentUpdatedAt: task.updatedAt });
+  }
+  const now = new Date().toISOString();
+  task.status = TASK_STATUS.REJECTED;
+  task.rejectedAt = now;
+  task.rejectedBy = req.session.user.id;
+  task.rejectedByName = req.session.user.name;
+  task.rejectNote = rejectNote || '';
+  task.updatedAt = now;
+  task.statusHistory.push({ status: TASK_STATUS.REJECTED, by: req.session.user.id, byName: req.session.user.name, at: now, note: rejectNote || '驳回' });
+  tasks[idx] = task;
+  db.saveTasks(tasks);
+  db.addHistory({
+    action: 'REJECT_TASK',
+    shiftId: task.shiftId,
+    taskId: task.id,
+    userId: req.session.user.id,
+    userName: req.session.user.name,
+    detail: `驳回整改任务 ${task.id}：${rejectNote || '无'}`
+  });
+  res.json({ task });
+});
+
+app.get('/api/export/tasks', requireAuth, (req, res) => {
+  const { storeId, status, format = 'json' } = req.query;
+  let tasks = db.getTasks();
+  if (req.session.user.role === 'staff') {
+    tasks = tasks.filter(t => t.storeId === req.session.user.storeId);
+  }
+  if (storeId) tasks = tasks.filter(t => t.storeId === storeId);
+  if (status) tasks = tasks.filter(t => t.status === status);
+  const stores = db.getStores();
+  const storeMap = Object.fromEntries(stores.map(s => [s.id, s.name]));
+  const statusLabelMap = { pending: '待分派', assigned: '已分派', submitted: '已提交', rejected: '已驳回', closed: '已关闭' };
+  const data = tasks.map(t => ({
+    id: t.id,
+    exceptionId: t.exceptionId,
+    shiftId: t.shiftId,
+    storeName: storeMap[t.storeId] || t.storeId,
+    title: t.title,
+    description: t.description,
+    assigneeName: t.assigneeName,
+    deadline: t.deadline,
+    steps: t.steps,
+    attachmentNote: t.attachmentNote,
+    status: statusLabelMap[t.status] || t.status,
+    createdByName: t.createdByName,
+    assignedByName: t.assignedByName || '',
+    submittedByName: t.submittedByName || '',
+    rejectedByName: t.rejectedByName || '',
+    closedByName: t.closedByName || '',
+    submitNote: t.submitNote || '',
+    rejectNote: t.rejectNote || '',
+    closeNote: t.closeNote || '',
+    createdAt: t.createdAt,
+    assignedAt: t.assignedAt || '',
+    submittedAt: t.submittedAt || '',
+    closedAt: t.closedAt || ''
+  }));
+  if (format === 'csv') {
+    const headers = [
+      { key: 'id', label: '任务ID' },
+      { key: 'exceptionId', label: '异常ID' },
+      { key: 'shiftId', label: '班次ID' },
+      { key: 'storeName', label: '门店' },
+      { key: 'title', label: '标题' },
+      { key: 'description', label: '描述' },
+      { key: 'assigneeName', label: '责任人' },
+      { key: 'deadline', label: '截止时间' },
+      { key: 'steps', label: '处理步骤' },
+      { key: 'attachmentNote', label: '附件说明' },
+      { key: 'status', label: '状态' },
+      { key: 'createdByName', label: '发起人' },
+      { key: 'assignedByName', label: '分派人' },
+      { key: 'submittedByName', label: '提交人' },
+      { key: 'rejectedByName', label: '驳回人' },
+      { key: 'closedByName', label: '关闭人' },
+      { key: 'submitNote', label: '提交说明' },
+      { key: 'rejectNote', label: '驳回原因' },
+      { key: 'closeNote', label: '关闭说明' },
+      { key: 'createdAt', label: '创建时间' },
+      { key: 'assignedAt', label: '分派时间' },
+      { key: 'submittedAt', label: '提交时间' },
+      { key: 'closedAt', label: '关闭时间' }
+    ];
+    const csv = '\uFEFF' + jsonToCSV(data, headers);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="tasks_${Date.now()}.csv"`);
+    return res.send(csv);
+  }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="tasks_${Date.now()}.json"`);
+  res.json({ tasks: data });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

@@ -518,6 +518,38 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   console.log('  OK repair-orders CSV/JSON export');
 
   console.log();
+  console.log('[PERM-1] Store isolation for manager2 (Haidian store) - can only see own store data');
+  const m2Shifts = (await request('GET', '/api/shifts', null, m2)).data.shifts;
+  eq(m2Shifts.length, 0, 'manager2 (Haidian) sees 0 shifts from Chaoyang store');
+  const m2Devices = (await request('GET', '/api/devices', null, m2)).data.devices;
+  eq(m2Devices.length, 0, 'manager2 (Haidian) sees 0 devices from Chaoyang store');
+  const m2Tasks = (await request('GET', '/api/tasks', null, m2)).data.tasks;
+  eq(m2Tasks.length, 0, 'manager2 (Haidian) sees 0 tasks from Chaoyang store');
+  console.log('  OK manager2 isolated to Haidian store');
+
+  console.log('[PERM-2] Export permission consistency - staff/manager export filtered by store');
+  const s1ShiftExport = await request('GET', '/api/export/shifts?format=json', null, s1);
+  eq(s1ShiftExport.status, 200, 'staff can export shifts');
+  eq(s1ShiftExport.data.shifts.length, (await request('GET', '/api/shifts', null, s1)).data.shifts.length, 'export matches list count for staff');
+  
+  const m2ShiftExport = await request('GET', '/api/export/shifts?format=json', null, m2);
+  eq(m2ShiftExport.status, 200, 'manager2 can export');
+  eq(m2ShiftExport.data.shifts.length, 0, 'manager2 export empty (no Haidian shifts)');
+  
+  const s1DeviceExport = await request('GET', '/api/export/devices?format=json', null, s1);
+  eq(s1DeviceExport.data.devices.length, (await request('GET', '/api/devices', null, s1)).data.devices.length, 'device export matches list');
+  console.log('  OK export permission consistent with list filtering');
+
+  console.log('[PERM-3] Staff cross-store access denied');
+  err(await request('GET', '/api/shifts/' + sid, null, s4), '无权查看', 'staff4 (Haidian) cannot access Chaoyang shift');
+  err(await request('POST', '/api/shifts', {
+    storeId: 'S001', shiftType: 'morning', shiftDate: today,
+    handoverStaffId: 'U003', receiveStaffId: 'U004', checklistItems: items
+  }, s4), '仅可创建本门店班次', 'staff4 cannot create Chaoyang shift');
+  err(await request('GET', '/api/devices/' + dvcForIns.id, null, s4), '无权查看', 'staff4 cannot view Chaoyang device');
+  console.log('  OK staff cross-store access denied');
+
+  console.log();
   console.log('[5/8] Operation history (extended with device/inspection/repair actions)');
   const hist = (await request('GET', '/api/history', null, m1)).data.history;
   const acts = hist.map(h => h.action);
@@ -647,6 +679,37 @@ function err(r, sub, m) { if (r.status === 200 || !(r.data.error || '').includes
   eq(after.devicesCsv, before.devicesCsv, 'devices CSV identical');
   eq(JSON.stringify(after.devicesJson), JSON.stringify(before.devicesJson), 'devices JSON identical');
   console.log('  OK device persistence verified');
+
+  console.log();
+  console.log('[CONFLICT-1] Device update conflict');
+  const existingDevices = (await request('GET', '/api/devices?storeId=S001', null, m1r)).data.devices;
+  const testDevice = existingDevices[0];
+  const cdId = testDevice.id;
+  const cdOldUpdatedAt = testDevice.updatedAt;
+  await new Promise(r => setTimeout(r, 100));
+  await request('PUT', `/api/devices/${cdId}`, { name: 'Updated by A' }, m1r);
+  const staleUpdate = await request('PUT', `/api/devices/${cdId}`, { name: 'Stale Update', updatedAt: cdOldUpdatedAt }, m1r);
+  eq(staleUpdate.status, 409, 'stale device update returns 409');
+  const cdAfter = (await request('GET', `/api/devices/${cdId}`, null, m1r)).data.device;
+  eq(cdAfter.name, 'Updated by A', 'device name unchanged after 409');
+  console.log('  OK device update conflict preserved');
+
+  console.log('[CONFLICT-2] Task submit conflict (reject-submit race)');
+  const existingTasks = (await request('GET', '/api/tasks?storeId=S001', null, m1r)).data.tasks;
+  const rejectedTask = existingTasks.find(t => t.status === 'rejected');
+  if (!rejectedTask) {
+    console.log('  SKIP no rejected task found, conflict already tested in TASK-2');
+  } else {
+    const ctId = rejectedTask.id;
+    const ctOldUpdatedAt = rejectedTask.updatedAt;
+    await new Promise(r => setTimeout(r, 100));
+    await request('POST', `/api/tasks/${ctId}/submit`, { submitNote: 'first submit' }, m1r);
+    const staleSubmit = await request('POST', `/api/tasks/${ctId}/submit`, { submitNote: 'stale', updatedAt: ctOldUpdatedAt }, m1r);
+    eq(staleSubmit.status, 409, 'stale task submit returns 409');
+    const ctAfter = (await request('GET', `/api/tasks/${ctId}`, null, m1r)).data.task;
+    eq(ctAfter.status, 'submitted', 'status unchanged after 409 (already submitted)');
+    console.log('  OK 409 task conflict preserved');
+  }
 
   eq(after.inspectionList.inspections.length, before.inspectionList.inspections.length, 'inspection list count preserved');
   eq(after.inspection.inspection.status, before.inspection.inspection.status, 'inspection status preserved');
